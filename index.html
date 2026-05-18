@@ -25,8 +25,9 @@
       <a class="active" data-tab="daily" href="#daily">일간</a>
       <a data-tab="weekly" href="#weekly">주간</a>
       <span class="tab-sep">│</span>
-      <a class="tab-tool" data-action="export-data" title="JSON 백업">⤓</a>
+      <a class="tab-tool" data-action="export-data" title="JSON 백업 다운로드">⤓</a>
       <a class="tab-tool" data-action="import-data" title="JSON 복원">⤒</a>
+      <a class="tab-tool" data-action="auto-backups" title="자동 백업 (최근 24개)">⟲</a>
     </div>
     <div class="user">
       <span class="date" id="nav-date">2026 · 05 · 18 · MON</span>
@@ -148,6 +149,21 @@
       <button class="btn-ghost" data-action="modal-close">취소</button>
       <button class="btn-ghost" data-action="erase-hourly" style="color:var(--urgent)">지우기</button>
       <button class="btn btn-gold" data-action="save-hourly">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Auto Backups -->
+<div class="modal-overlay" id="modal-backups" hidden>
+  <div class="modal" style="max-width: 540px">
+    <div class="modal-title">자동 백업 복원</div>
+    <p class="modal-help">15분마다 자동 저장된 스냅샷 (최근 24개). 잘못 지웠거나 데이터 망가졌을 때 시점 골라서 복원.</p>
+    <div class="backup-list" id="backup-list"></div>
+    <div class="modal-help" style="margin-top:14px; padding:10px 14px; background:var(--bg); border-radius:10px; line-height:1.6;">
+      💡 <strong>완벽한 안전을 위해</strong>: 일주일에 한 번 정도 ⤓ JSON 백업도 받아두면 Safari가 데이터를 지워도 ⤒ 복원으로 살릴 수 있어.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-gold" data-action="modal-close">닫기</button>
     </div>
   </div>
 </div>

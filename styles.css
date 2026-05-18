@@ -395,6 +395,27 @@ em { font-style: normal; }
   display: flex; flex-direction: column; gap: 6px; margin-top: 8px;
   max-height: 360px; overflow-y: auto;
 }
+.backup-list {
+  display: flex; flex-direction: column; gap: 4px; margin-top: 8px;
+  max-height: 320px; overflow-y: auto;
+}
+.backup-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; background: var(--bg); border-radius: 12px;
+  font-size: 13px; letter-spacing: -0.015em;
+}
+.backup-row .bk-meta {
+  display: flex; flex-direction: column; gap: 2px;
+}
+.backup-row .bk-time { color: var(--ink); font-weight: 500; }
+.backup-row .bk-sub { font-size: 10px; color: var(--muted); letter-spacing: 0.04em; }
+.backup-row button {
+  padding: 6px 14px; background: var(--ink); color: var(--bg);
+  border: 0; border-radius: 999px; cursor: pointer;
+  font-family: inherit; font-size: 12px; letter-spacing: -0.01em;
+}
+.backup-row button:hover { background: var(--signal); }
+.backup-empty { text-align: center; color: var(--muted); font-size: 13px; padding: 30px 0; }
 .preset-cat-section {
   background: var(--bg); border-radius: 8px; padding: 12px 14px;
 }

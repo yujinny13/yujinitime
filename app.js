@@ -5,6 +5,8 @@
 'use strict';
 
 const STORAGE_KEY = 'yujinitime-v1';
+const BACKUP_KEY = 'yujinitime-backups-v1';
+const BACKUP_MAX = 24; // rolling 24개 (약 6시간치 — 15분마다 1개)
 const VERSION = 1;
 
 let viewedDate = null;
@@ -117,9 +119,46 @@ function loadState() {
   return deepClone(DEFAULT_STATE);
 }
 
+let lastAutoBackupAt = 0;
+function pushAutoBackup(snapshot) {
+  try {
+    const now = Date.now();
+    if (now - lastAutoBackupAt < 15 * 60 * 1000) return; // 15분에 1번
+    lastAutoBackupAt = now;
+    const raw = localStorage.getItem(BACKUP_KEY);
+    let ring = [];
+    try { ring = raw ? JSON.parse(raw) : []; } catch (e) { ring = []; }
+    if (!Array.isArray(ring)) ring = [];
+    ring.unshift({ ts: now, state: snapshot });
+    if (ring.length > BACKUP_MAX) ring = ring.slice(0, BACKUP_MAX);
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(ring));
+  } catch (e) { /* 용량 초과는 무시 — 최신 main save가 더 중요 */ }
+}
+
+function getAutoBackups() {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    const ring = raw ? JSON.parse(raw) : [];
+    return Array.isArray(ring) ? ring : [];
+  } catch (e) { return []; }
+}
+
+function restoreFromAutoBackup(ts) {
+  const ring = getAutoBackups();
+  const entry = ring.find(x => x.ts === ts);
+  if (!entry) return false;
+  state = Object.assign({}, deepClone(DEFAULT_STATE), entry.state);
+  state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+  saveState();
+  renderDaily();
+  return true;
+}
+
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const snapshot = JSON.stringify(state);
+    localStorage.setItem(STORAGE_KEY, snapshot);
+    pushAutoBackup(JSON.parse(snapshot));
   } catch (e) {
     console.warn('Save failed:', e);
   }
@@ -1122,6 +1161,42 @@ function exportData() {
 function importData() {
   $('#import-file').click();
 }
+function openBackupsModal() {
+  const list = $('#backup-list');
+  const ring = getAutoBackups();
+  list.innerHTML = '';
+  if (ring.length === 0) {
+    list.innerHTML = `<div class="backup-empty">아직 자동 백업 없음. 시간표를 채우면 15분마다 자동 저장돼.</div>`;
+  } else {
+    ring.forEach(entry => {
+      const d = new Date(entry.ts);
+      const dateStr = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      const mins = Math.floor((Date.now() - entry.ts) / 60000);
+      const ago = mins < 60 ? `${mins}분 전` : mins < 1440 ? `${Math.floor(mins/60)}시간 전` : `${Math.floor(mins/1440)}일 전`;
+      const days = Object.keys(entry.state?.timeBlocks || {}).length;
+      const row = el('div', 'backup-row');
+      row.innerHTML = `
+        <div class="bk-meta">
+          <span class="bk-time">${dateStr}</span>
+          <span class="bk-sub">${ago} · 시간표 ${days}일치</span>
+        </div>
+        <button data-ts="${entry.ts}">복원</button>
+      `;
+      row.querySelector('button').addEventListener('click', () => {
+        if (!confirm(`${dateStr} 시점으로 되돌릴까? 현재 데이터는 사라져.`)) return;
+        if (restoreFromAutoBackup(entry.ts)) {
+          closeAllModals();
+          toast('<em>복원 완료</em>');
+        } else {
+          toast('복원 실패');
+        }
+      });
+      list.appendChild(row);
+    });
+  }
+  openModal('modal-backups');
+}
+
 function handleImportFile(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1175,6 +1250,7 @@ function setupEventDelegation() {
       case 'week-today': weeklyOffset = 0; renderWeekly(); break;
       case 'export-data': exportData(); break;
       case 'import-data': importData(); break;
+      case 'auto-backups': openBackupsModal(); break;
     }
   });
 
