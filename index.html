@@ -12,9 +12,31 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-<link rel="stylesheet" href="styles.css?v=1.0.0">
+<link rel="stylesheet" href="styles.css?v=1.1.0">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+
+<!-- ============= LOGIN OVERLAY ============= -->
+<div class="login-overlay" id="login-overlay" hidden>
+  <div class="login-card">
+    <div class="login-brand">Y U J I N I<span class="sep">·</span>T I M E</div>
+    <div class="login-title">회사컴 ↔ 집컴 동기</div>
+    <div class="login-sub">너 이메일로 로그인 링크를 보내. 비밀번호 없음, 매직링크.</div>
+    <form id="login-form" onsubmit="return false">
+      <input type="email" id="login-email" placeholder="yujinny13@gmail.com" required autocomplete="email" />
+      <button id="login-btn" type="submit">매직 링크 받기 →</button>
+    </form>
+    <div class="login-status" id="login-status"></div>
+    <div class="login-foot">
+      🔒 본인 이메일만 등록됨. 데이터는 본인 user_id에 묶임.<br>
+      로그인 안 하고 쓸 수도 있음 — <span data-action="skip-login" style="text-decoration:underline; cursor:pointer; color:var(--signal)">이 기기에서만</span>
+    </div>
+  </div>
+</div>
+
+<!-- Sync Indicator -->
+<div class="sync-indicator" id="sync-indicator"></div>
 
 <div class="container">
 
@@ -43,6 +65,22 @@
       <div class="dn-label" id="dn-label">2026 · 05 · 18 · MON</div>
       <button class="dn-btn" data-action="day-today" title="오늘로">오늘</button>
       <button class="dn-btn" data-action="day-next" title="내일">›</button>
+    </section>
+
+    <!-- DAILY GOAL CARD -->
+    <section class="goal-card" id="goal-card">
+      <div class="goal-head">
+        <div class="goal-label cor">TODAY'S GOAL · 오늘의 목표</div>
+        <span class="goal-edit" data-action="edit-goal" title="목표 편집">✎</span>
+      </div>
+      <div class="goal-display" id="goal-display"></div>
+      <div class="goal-edit-box" id="goal-edit-box" hidden>
+        <textarea id="goal-input" placeholder="오늘 꼭 해낼 한 가지" rows="2"></textarea>
+        <div class="goal-actions">
+          <button class="btn-ghost" data-action="cancel-goal">취소</button>
+          <button class="btn btn-gold" data-action="save-goal">완료</button>
+        </div>
+      </div>
     </section>
 
     <!-- DAILY 2-COL: 좌측 시간표 + 우측 timer -->
@@ -182,6 +220,6 @@
 
 <input type="file" id="import-file" accept=".json" hidden />
 
-<script src="app.js?v=1.0.0"></script>
+<script src="app.js?v=1.1.0"></script>
 </body>
 </html>

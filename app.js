@@ -9,6 +9,16 @@ const BACKUP_KEY = 'yujinitime-backups-v1';
 const BACKUP_MAX = 24; // rolling 24개 (약 6시간치 — 15분마다 1개)
 const VERSION = 1;
 
+// ============= SUPABASE CONFIG =============
+// 공개 키 — RLS로 보호되니 노출 OK
+const SUPABASE_URL = 'https://mopeirfaxfojkrkswntf.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_JzBgsQJr6ZvOtFzZP3YZqA_1FzGXAHW';
+const CLOUD_TABLE = 'yujinitime_state';
+let supa = null;
+let currentSession = null;
+let cloudReady = false;
+let skipCloud = false;
+
 let viewedDate = null;
 let weeklyOffset = 0;
 
@@ -53,6 +63,8 @@ const DEFAULT_STATE = {
   },
   // timeBlocks[date] = [{ hour, slot, span, type, label }]
   timeBlocks: {},
+  // dailyGoals[date] = "오늘의 목표 텍스트"
+  dailyGoals: {},
   timer: {
     running: false,
     startedAt: null,
@@ -107,6 +119,7 @@ function loadState() {
       const parsed = JSON.parse(raw);
       const merged = Object.assign({}, deepClone(DEFAULT_STATE), parsed);
       merged.timeBlocks = parsed.timeBlocks || {};
+      merged.dailyGoals = parsed.dailyGoals || {};
       merged.timer = Object.assign({}, deepClone(DEFAULT_STATE.timer), parsed.timer || {});
       merged.timerPresets = Object.assign({}, deepClone(DEFAULT_STATE.timerPresets), parsed.timerPresets || {});
       merged.timerPresets = normalizeTimerPresets(merged.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
@@ -162,6 +175,183 @@ function saveState() {
   } catch (e) {
     console.warn('Save failed:', e);
   }
+  if (cloudReady && currentSession && !skipCloud) cloudSyncDebounced();
+}
+
+// ============= SUPABASE AUTH + SYNC =============
+async function initCloud() {
+  if (!window.supabase) {
+    console.warn('Supabase SDK 미로드 — 오프라인 모드');
+    return;
+  }
+  // 사용자가 "이 기기에서만" 골랐는지 확인
+  if (localStorage.getItem('yujinitime-skip-cloud') === '1') {
+    skipCloud = true;
+    return;
+  }
+  supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storageKey: 'yujinitime-auth' // wealthy-life와 분리
+    }
+  });
+  const { data: { session } } = await supa.auth.getSession();
+  currentSession = session;
+  cloudReady = true;
+
+  supa.auth.onAuthStateChange(async (event, session) => {
+    currentSession = session;
+    if (event === 'SIGNED_IN') {
+      hideLogin();
+      await pullFromCloud();
+      renderDaily();
+      toast('☁ 클라우드 동기 활성 — 어디서나 같은 데이터');
+    } else if (event === 'SIGNED_OUT') {
+      showLogin();
+    }
+  });
+
+  if (!currentSession) {
+    showLogin();
+  } else {
+    await pullFromCloud();
+    renderDaily();
+  }
+}
+
+function showLogin() {
+  const ov = document.getElementById('login-overlay');
+  if (ov) ov.removeAttribute('hidden');
+}
+function hideLogin() {
+  const ov = document.getElementById('login-overlay');
+  if (ov) ov.setAttribute('hidden', '');
+}
+
+async function sendMagicLink() {
+  const email = document.getElementById('login-email').value.trim();
+  const status = document.getElementById('login-status');
+  const btn = document.getElementById('login-btn');
+  if (!email) {
+    status.textContent = '이메일을 입력해줘.';
+    status.className = 'login-status error';
+    return;
+  }
+  btn.disabled = true; btn.textContent = '보내는 중...';
+  status.className = 'login-status'; status.textContent = '';
+  try {
+    const { error } = await supa.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: window.location.origin,
+        shouldCreateUser: true
+      }
+    });
+    if (error) {
+      status.className = 'login-status error';
+      status.textContent = `오류: ${error.message}`;
+      btn.disabled = false; btn.textContent = '매직 링크 받기 →';
+    } else {
+      status.innerHTML = `📬 <em>${email}</em>로 매직 링크 보냈어.<br>메일함 (스팸함도) 확인하고 링크 클릭.`;
+      btn.disabled = false; btn.textContent = '다시 보내기';
+    }
+  } catch (e) {
+    status.className = 'login-status error';
+    status.textContent = `네트워크 오류: ${e.message}`;
+    btn.disabled = false; btn.textContent = '매직 링크 받기 →';
+  }
+}
+
+function skipCloudSync() {
+  if (!confirm('로그인 없이 이 기기에서만 쓸까? 회사컴 ↔ 집컴 동기 안 됨.')) return;
+  localStorage.setItem('yujinitime-skip-cloud', '1');
+  skipCloud = true;
+  hideLogin();
+}
+
+async function pullFromCloud() {
+  if (!supa || !currentSession) return;
+  showSyncIndicator('syncing', '동기 중...');
+  try {
+    const { data, error } = await supa
+      .from(CLOUD_TABLE)
+      .select('state, updated_at')
+      .eq('user_id', currentSession.user.id)
+      .maybeSingle();
+    if (error) {
+      // 테이블이 없으면 안내
+      if (String(error.message).toLowerCase().includes('does not exist') ||
+          String(error.code) === '42P01' ||
+          String(error.message).toLowerCase().includes('schema cache')) {
+        showSyncIndicator('error', '⚠ 테이블 없음 — Supabase에서 SQL 실행 필요');
+        setTimeout(hideSyncIndicator, 6000);
+        return;
+      }
+      throw error;
+    }
+    if (data && data.state && Object.keys(data.state).length > 0) {
+      state = Object.assign({}, deepClone(DEFAULT_STATE), data.state);
+      state.timerPresets = Object.assign({}, deepClone(DEFAULT_STATE.timerPresets), state.timerPresets || {});
+      state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+      state.timeBlocks = state.timeBlocks || {};
+      state.dailyGoals = state.dailyGoals || {};
+      state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      showSyncIndicator('synced', '동기 완료');
+    } else {
+      // 클라우드 비어있음 — 로컬 데이터 푸시
+      await pushToCloud();
+      showSyncIndicator('synced', '첫 동기 완료');
+    }
+  } catch (e) {
+    showSyncIndicator('error', '동기 오류 (오프라인 모드)');
+  }
+  setTimeout(hideSyncIndicator, 2500);
+}
+
+let cloudPushTimeout = null;
+function cloudSyncDebounced() {
+  clearTimeout(cloudPushTimeout);
+  cloudPushTimeout = setTimeout(pushToCloud, 1500);
+}
+
+async function pushToCloud() {
+  if (!supa || !currentSession) return;
+  showSyncIndicator('syncing', '저장 중...');
+  try {
+    const { error } = await supa
+      .from(CLOUD_TABLE)
+      .upsert({
+        user_id: currentSession.user.id,
+        state: state,
+        updated_at: new Date().toISOString()
+      });
+    if (error) throw error;
+    showSyncIndicator('synced', '클라우드 저장됨');
+    setTimeout(hideSyncIndicator, 1500);
+  } catch (e) {
+    showSyncIndicator('error', '저장 실패 (재시도 중)');
+    setTimeout(hideSyncIndicator, 2500);
+  }
+}
+
+function showSyncIndicator(cls, text) {
+  const i = document.getElementById('sync-indicator');
+  if (!i) return;
+  i.className = 'sync-indicator show ' + cls;
+  i.textContent = text;
+}
+function hideSyncIndicator() {
+  const i = document.getElementById('sync-indicator');
+  if (i) i.className = 'sync-indicator';
+}
+
+async function cloudLogout() {
+  if (!supa) return;
+  await supa.auth.signOut();
+  toast('로그아웃 — 매직링크로 다시 들어와');
 }
 
 let state = loadState();
@@ -289,10 +479,58 @@ function initRouter() {
 function renderDaily() {
   if (!viewedDate) viewedDate = state.meta.lastViewedDate || todayStr();
   renderDailyDateNav();
+  renderDailyGoal();
   renderTimerPanel();
   renderTimerPresets();
   renderHourlyTable();
   renderPalette();
+}
+
+function renderDailyGoal() {
+  const today = curDate();
+  const goal = (state.dailyGoals && state.dailyGoals[today]) || '';
+  const disp = $('#goal-display');
+  const box = $('#goal-edit-box');
+  if (!disp || !box) return;
+  if (goal) {
+    disp.textContent = goal;
+    disp.classList.remove('empty');
+  } else {
+    disp.textContent = '아직 안 적음 — ✎ 눌러서 적기';
+    disp.classList.add('empty');
+  }
+  disp.removeAttribute('hidden');
+  box.setAttribute('hidden', '');
+}
+
+function openGoalEditor() {
+  const today = curDate();
+  const goal = (state.dailyGoals && state.dailyGoals[today]) || '';
+  const disp = $('#goal-display');
+  const box = $('#goal-edit-box');
+  const inp = $('#goal-input');
+  if (!disp || !box || !inp) return;
+  inp.value = goal;
+  disp.setAttribute('hidden', '');
+  box.removeAttribute('hidden');
+  setTimeout(() => inp.focus(), 30);
+}
+
+function saveDailyGoal() {
+  const today = curDate();
+  const inp = $('#goal-input');
+  if (!inp) return;
+  const v = inp.value.trim();
+  if (!state.dailyGoals) state.dailyGoals = {};
+  if (v) state.dailyGoals[today] = v;
+  else delete state.dailyGoals[today];
+  saveState();
+  renderDailyGoal();
+  toast('<em>목표 저장</em>');
+}
+
+function cancelDailyGoal() {
+  renderDailyGoal();
 }
 
 function renderDailyDateNav() {
@@ -1085,7 +1323,11 @@ function renderWeeklyHourly(monday) {
     const dateStr = fmtDate(date);
     const isToday = dateStr === todayStr();
     const head = el('div', 'wh-day-head' + (isToday ? ' today' : ''));
-    head.innerHTML = `${dows[i]}<span class="dn">${date.getDate()}</span>`;
+    const goal = (state.dailyGoals && state.dailyGoals[dateStr]) || '';
+    const goalHtml = goal
+      ? `<span class="dgoal">${escapeHtml(goal)}</span>`
+      : `<span class="dgoal empty">목표 없음</span>`;
+    head.innerHTML = `${dows[i]}<span class="dn">${date.getDate()}</span>${goalHtml}`;
     table.appendChild(head);
   }
   const hours = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5];
@@ -1251,6 +1493,10 @@ function setupEventDelegation() {
       case 'export-data': exportData(); break;
       case 'import-data': importData(); break;
       case 'auto-backups': openBackupsModal(); break;
+      case 'edit-goal': openGoalEditor(); break;
+      case 'save-goal': saveDailyGoal(); break;
+      case 'cancel-goal': cancelDailyGoal(); break;
+      case 'skip-login': skipCloudSync(); break;
     }
   });
 
@@ -1276,6 +1522,22 @@ function setupEventDelegation() {
   // Import file change
   const imp = $('#import-file');
   if (imp) imp.addEventListener('change', handleImportFile);
+
+  // Goal: display 클릭 시 편집 모드
+  const disp = $('#goal-display');
+  if (disp) disp.addEventListener('click', () => openGoalEditor());
+  // ⌘/Ctrl+Enter 로 저장
+  const goalInp = $('#goal-input');
+  if (goalInp) goalInp.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      saveDailyGoal();
+    }
+  });
+
+  // 로그인 폼
+  const lf = document.getElementById('login-form');
+  if (lf) lf.addEventListener('submit', e => { e.preventDefault(); sendMagicLink(); });
 }
 
 // =================================================================
@@ -1290,6 +1552,8 @@ function init() {
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(updateTimerDisplay, 1000);
   }
+  // Cloud sync 시작 (Supabase SDK 로드 후)
+  initCloud().catch(e => console.warn('cloud init failed:', e));
 }
 
 document.addEventListener('DOMContentLoaded', init);
