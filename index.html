@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>유진이타임 · yujinitime</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
+<link rel="stylesheet" href="styles.css?v=1.0.0">
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ============= NAV ============= -->
+  <nav class="nav">
+    <div class="brand">Y U J I N I<span class="sep">·</span>T I M E</div>
+    <div class="tabs">
+      <a class="active" data-tab="daily" href="#daily">일간</a>
+      <a data-tab="weekly" href="#weekly">주간</a>
+      <span class="tab-sep">│</span>
+      <a class="tab-tool" data-action="export-data" title="JSON 백업">⤓</a>
+      <a class="tab-tool" data-action="import-data" title="JSON 복원">⤒</a>
+    </div>
+    <div class="user">
+      <span class="date" id="nav-date">2026 · 05 · 18 · MON</span>
+    </div>
+  </nav>
+
+  <!-- ============= DAILY PAGE ============= -->
+  <div class="page" data-page="daily">
+
+    <!-- DATE NAV -->
+    <section class="daily-date-nav">
+      <button class="dn-btn" data-action="day-prev" title="어제">‹</button>
+      <div class="dn-label" id="dn-label">2026 · 05 · 18 · MON</div>
+      <button class="dn-btn" data-action="day-today" title="오늘로">오늘</button>
+      <button class="dn-btn" data-action="day-next" title="내일">›</button>
+    </section>
+
+    <!-- DAILY 2-COL: 좌측 시간표 + 우측 timer -->
+    <section class="daily-shell">
+
+    <!-- 좌측: HOURLY 6×10MIN -->
+    <div class="daily-main">
+      <section class="cell tp-table-wrap">
+        <div class="h-title"><span class="cor">HOURLY · 6 × 10MIN · 빈칸 클릭하여 채우기</span></div>
+        <div class="tt" id="tt-grid"></div>
+        <div class="palette">
+          <div class="palette-title cor">PALETTE · 빈칸 색칠하기 가이드</div>
+          <div class="palette-row" id="palette-row"></div>
+        </div>
+        <div class="tt-legend">
+          <div class="lg"><span class="sw-mini" style="background:var(--money)"></span>돈</div>
+          <div class="lg"><span class="sw-mini" style="background:var(--promote)"></span>알림</div>
+          <div class="lg"><span class="sw-mini" style="background:var(--life)"></span>삶</div>
+          <div class="lg"><span class="sw-mini" style="background:#B5ADA0"></span>휴식</div>
+        </div>
+      </section>
+    </div>
+
+    <!-- 우측: TIME PANEL -->
+    <aside class="timepanel-wrap">
+      <aside class="timepanel">
+        <div class="tp-header">
+          <div class="tp-title"><span class="cor">FOCUS TIMER</span></div>
+          <!-- 1) 자주 하는 일 -->
+          <div class="tp-presets">
+            <div class="tp-presets-head">
+              <div class="tp-presets-title cor">PRESETS · 자주 하는 일</div>
+              <span class="tp-presets-edit" data-action="edit-presets">편집 ✎</span>
+            </div>
+            <div class="tp-presets-row" id="tp-presets-row"></div>
+          </div>
+          <!-- 2) 직접 입력 -->
+          <div class="tp-custom">
+            <input type="text" class="tp-task-input" id="tp-task-input" placeholder="없으면 직접 적기" />
+            <div class="tp-color-row" id="tp-color-row"></div>
+          </div>
+          <!-- 3) 현재 라벨 + 카테고리 -->
+          <div class="tp-current" id="tp-current">
+            <span id="tp-task-label">대기 중...</span>
+            <span class="tp-cat-pick" id="tp-cat-pick">💰 돈</span>
+          </div>
+          <!-- 4) 타이머 -->
+          <div class="tp-timer" id="tp-display">00 : 00 : 00</div>
+          <!-- 5) 시작/지우기 -->
+          <div class="tp-buttons">
+            <button class="btn btn-gold" id="btn-timer-start" data-action="timer-start">▶ 시작</button>
+            <button class="btn" id="btn-timer-clear" data-action="timer-clear">지우기</button>
+          </div>
+          <div class="tp-hint">시작 → 자동으로 시간표에 기록</div>
+        </div>
+      </aside>
+    </aside>
+
+    </section>
+  </div>
+
+  <!-- ============= WEEKLY PAGE ============= -->
+  <div class="page" data-page="weekly" hidden>
+    <section class="page-head">
+      <div>
+        <div class="ph-label"><span class="cor">WEEKLY</span><span class="kr"> · 이번주</span></div>
+        <h1 class="ph-title" id="weekly-range">5월 1주차</h1>
+      </div>
+      <div class="ph-nav">
+        <button class="btn-ghost" data-action="week-prev">‹ 지난주</button>
+        <button class="btn-ghost" data-action="week-today">이번주</button>
+        <button class="btn-ghost" data-action="week-next">다음주 ›</button>
+      </div>
+    </section>
+    <section class="weekly-hourly" id="weekly-hourly"></section>
+  </div>
+
+</div>
+
+<!-- ============= MODALS ============= -->
+
+<!-- Modal: Hourly Cell Picker -->
+<div class="modal-overlay" id="modal-hourly" hidden>
+  <div class="modal">
+    <div class="modal-title" id="modal-hourly-title">시간 채우기</div>
+    <p class="modal-help">시간 정하고 자주 하는 일 골라. 없으면 아래에서 직접 적어. (색이 카테고리 자동 결정)</p>
+    <div class="modal-grid">
+      <div>
+        <label class="modal-label">시작</label>
+        <input type="time" id="modal-hourly-start" step="600" />
+      </div>
+      <div>
+        <label class="modal-label">끝</label>
+        <input type="time" id="modal-hourly-end" step="600" />
+      </div>
+    </div>
+    <label class="modal-label">자주 하는 일 (클릭 = 라벨·색·카테고리 자동)</label>
+    <div class="modal-preset-row" id="modal-hourly-presets"></div>
+    <label class="modal-label" style="margin-top:14px">— 또는 직접 적기 —</label>
+    <input type="text" id="modal-hourly-label" placeholder="라벨 (예: 산책 / 통화)" />
+    <label class="modal-label" style="margin-top:8px">색 (자동으로 돈/알림/삶 결정)</label>
+    <div class="palette-row" id="modal-hourly-pastel"></div>
+    <div class="modal-actions">
+      <button class="btn-ghost" data-action="modal-close">취소</button>
+      <button class="btn-ghost" data-action="erase-hourly" style="color:var(--urgent)">지우기</button>
+      <button class="btn btn-gold" data-action="save-hourly">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Edit Presets -->
+<div class="modal-overlay" id="modal-presets" hidden>
+  <div class="modal" style="max-width: 540px">
+    <div class="modal-title">프리셋 편집</div>
+    <p class="modal-help">자주 하는 일을 카테고리별로 — 추가하거나 × 눌러 삭제. 색을 바꾸려면 동그라미 클릭.</p>
+    <div class="preset-edit-list" id="preset-edit-list"></div>
+    <div class="modal-actions">
+      <button class="btn btn-gold" data-action="modal-close">닫기</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="import-file" accept=".json" hidden />
+
+<script src="app.js?v=1.0.0"></script>
+</body>
+</html>
