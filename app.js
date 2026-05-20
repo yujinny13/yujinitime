@@ -308,6 +308,170 @@ function formatTimeAgo(ts) {
 
 let lastSyncAt = null;
 
+// ☁ 버튼 클릭 시 = 클라우드 vs 로컬 비교 + 강제 동기 모달
+async function openCloudStatus() {
+  const m = document.getElementById('modal-cloud');
+  if (!m) return;
+  const body = document.getElementById('cloud-status-body');
+  const actions = document.getElementById('cloud-actions');
+  body.innerHTML = `<div class="cloud-loading">☁ 클라우드 상태 확인 중...</div>`;
+  actions.innerHTML = '';
+  m.removeAttribute('hidden');
+
+  // 로그인 안 됨 처리
+  if (!supa || !currentSession) {
+    body.innerHTML = `
+      <div class="cloud-warn">
+        ⚠️ <strong>로그인 안 됨</strong> — 클라우드 동기 안 됨.<br>
+        로그인하면 회사컴 ↔ 집컴 데이터 자동 동기.
+      </div>`;
+    actions.innerHTML = `
+      <div class="cloud-actions-grid">
+        <button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>
+        <button onclick="closeAllModals();">닫기</button>
+      </div>`;
+    return;
+  }
+
+  // 클라우드 + 로컬 비교
+  let cloudData = null, cloudError = null;
+  try {
+    const { data, error } = await supa
+      .from(CLOUD_TABLE)
+      .select('state, updated_at')
+      .eq('user_id', currentSession.user.id)
+      .maybeSingle();
+    if (error) cloudError = error.message;
+    else cloudData = data;
+  } catch (e) {
+    cloudError = e.message;
+  }
+
+  const today = todayStr();
+  const localDays = Object.keys(state.timeBlocks || {}).length;
+  const localToday = (state.timeBlocks[today] || []).length;
+  const localGoals = Object.keys(state.dailyGoals || {}).length;
+
+  let cloudDays = 0, cloudToday = 0, cloudGoals = 0, cloudUpdated = '없음';
+  if (cloudData?.state) {
+    cloudDays = Object.keys(cloudData.state.timeBlocks || {}).length;
+    cloudToday = (cloudData.state.timeBlocks?.[today] || []).length;
+    cloudGoals = Object.keys(cloudData.state.dailyGoals || {}).length;
+    if (cloudData.updated_at) {
+      cloudUpdated = new Date(cloudData.updated_at).toLocaleString('ko-KR');
+    }
+  }
+
+  const isDifferent = cloudDays !== localDays || cloudToday !== localToday || cloudGoals !== localGoals;
+  const cloudIsEmpty = !cloudData?.state || (cloudDays === 0 && cloudGoals === 0);
+
+  body.innerHTML = `
+    ${cloudError ? `<div class="cloud-warn">☁ 클라우드 오류: ${escapeHtml(cloudError)}</div>` : ''}
+    ${cloudIsEmpty && !cloudError ? `<div class="cloud-warn">☁ 클라우드가 비어있어. "올리기" 누르면 이 기기 데이터를 클라우드에 저장.</div>` : ''}
+    ${isDifferent && !cloudIsEmpty ? `<div class="cloud-warn">⚠️ 클라우드와 이 기기가 달라! 어느 쪽이 맞는지 보고 한쪽으로 맞춰.</div>` : ''}
+    <div class="cloud-status-grid">
+      <div class="cloud-status-card ${isDifferent ? 'diff' : ''}">
+        <div class="csc-label">☁ 클라우드</div>
+        <div class="csc-row"><span class="k">시간표 일수</span><span class="v">${cloudDays}</span></div>
+        <div class="csc-row"><span class="k">오늘 채워진 칸</span><span class="v">${cloudToday}</span></div>
+        <div class="csc-row"><span class="k">목표 적은 일수</span><span class="v">${cloudGoals}</span></div>
+        <div class="csc-time">마지막 저장: ${cloudUpdated}</div>
+      </div>
+      <div class="cloud-status-card ${isDifferent ? 'diff' : ''}">
+        <div class="csc-label">💻 이 기기 (${navigator.userAgent.includes('Mobile') ? '모바일' : 'PC'})</div>
+        <div class="csc-row"><span class="k">시간표 일수</span><span class="v">${localDays}</span></div>
+        <div class="csc-row"><span class="k">오늘 채워진 칸</span><span class="v">${localToday}</span></div>
+        <div class="csc-row"><span class="k">목표 적은 일수</span><span class="v">${localGoals}</span></div>
+        <div class="csc-time">${currentSession.user.email}</div>
+      </div>
+    </div>
+  `;
+
+  actions.innerHTML = `
+    <div class="cloud-actions-grid">
+      <button class="primary" onclick="forcePullFromCloud()">⬇ 클라우드 → 이 기기 (받아오기)</button>
+      <button class="danger" onclick="forcePushToCloud()">⬆ 이 기기 → 클라우드 (덮어쓰기)</button>
+    </div>
+    <div class="cloud-actions-grid" style="margin-top:8px">
+      <button onclick="closeAllModals();">닫기</button>
+      <button onclick="cloudLogout(); closeAllModals();">로그아웃</button>
+    </div>
+  `;
+}
+
+async function forcePullFromCloud() {
+  if (!supa || !currentSession) return;
+  closeAllModals();
+  hideSyncErrorBanner();
+  showSyncIndicator('syncing', '클라우드에서 받아오는 중...');
+  try {
+    const { data, error } = await supa
+      .from(CLOUD_TABLE)
+      .select('state, updated_at')
+      .eq('user_id', currentSession.user.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data?.state) {
+      toast('☁ 클라우드 비어있음 — 받아올 게 없어');
+      hideSyncIndicator();
+      return;
+    }
+    pushUndo('클라우드에서 받아오기');
+    state = Object.assign({}, deepClone(DEFAULT_STATE), data.state);
+    state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+    state.timeBlocks = state.timeBlocks || {};
+    state.dailyGoals = state.dailyGoals || {};
+    state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+    lastSyncAt = Date.now();
+    showSyncIndicator('synced', '받아옴!');
+    setCloudStatus('synced', '방금 받아옴');
+    renderCurrentPage();
+    toast('☁ <em>클라우드 데이터로 교체</em> — 잘못되면 ↶ Cmd+Z로 되돌리기', 6000, { undoable: true });
+    setTimeout(hideSyncIndicator, 2000);
+  } catch(e) {
+    showSyncErrorBanner('클라우드 받아오기 실패: ' + (e.message || ''));
+    hideSyncIndicator();
+  }
+}
+
+async function forcePushToCloud() {
+  if (!supa || !currentSession) return;
+  closeAllModals();
+  hideSyncErrorBanner();
+  showSyncIndicator('syncing', '클라우드에 올리는 중...');
+  try {
+    const { error } = await supa
+      .from(CLOUD_TABLE)
+      .upsert({
+        user_id: currentSession.user.id,
+        state: state,
+        updated_at: new Date().toISOString()
+      });
+    if (error) throw error;
+    lastSyncAt = Date.now();
+    showSyncIndicator('synced', '올림!');
+    setCloudStatus('synced', '방금 올림');
+    updateNavCloudUI();
+    toast('☁ <em>이 기기 데이터를 클라우드에 올림</em> — 다른 기기에서 받아오면 같음');
+    setTimeout(hideSyncIndicator, 2000);
+  } catch(e) {
+    showSyncErrorBanner('클라우드 올리기 실패: ' + (e.message || ''));
+    hideSyncIndicator();
+  }
+}
+
+function showSyncErrorBanner(text) {
+  const b = document.getElementById('sync-error-banner');
+  if (!b) return;
+  document.getElementById('sync-error-text').textContent = '⚠️ ' + text;
+  b.removeAttribute('hidden');
+}
+function hideSyncErrorBanner() {
+  const b = document.getElementById('sync-error-banner');
+  if (b) b.setAttribute('hidden', '');
+}
+
 function openCloudLogin() {
   // skip 모드 해제하고 로그인 화면 보여주기
   localStorage.removeItem('yujinitime-skip-cloud');
@@ -409,24 +573,12 @@ async function pullFromCloud() {
       showSyncIndicator('synced', '동기 완료');
       setCloudStatus('synced', formatTimeAgo(lastSyncAt));
     } else {
-      // 클라우드 비어있음 — 자동 push 안 함 (사용자 confirm 받음)
-      const hasLocal = Object.keys(state.timeBlocks || {}).length > 0 || Object.keys(state.dailyGoals || {}).length > 0;
-      if (hasLocal) {
-        const ok = confirm('☁ 클라우드가 비어있어. 이 기기의 로컬 데이터를 클라우드에 올릴까?\n\n(취소 누르면 클라우드는 비어있고 이 기기 데이터로만 작업 — 위험)');
-        if (ok) {
-          await pushToCloud();
-          showSyncIndicator('synced', '첫 동기 완료');
-          setCloudStatus('synced', '방금');
-          lastSyncAt = Date.now();
-        } else {
-          showSyncIndicator('error', '클라우드 비어있음 — push 안 함');
-          setCloudStatus('local', '동기 안 됨');
-        }
-      } else {
-        // 로컬도 비어있으면 그냥 빈 상태에서 시작
-        showSyncIndicator('synced', '클라우드 비어있음 — 새로 시작');
-        setCloudStatus('synced', '시작');
-      }
+      // 클라우드 비어있음 — 자동으로 로컬 push (사용자 confirm 없음)
+      cloudPullDone = true; // push 잠금 풀기
+      await pushToCloud();
+      showSyncIndicator('synced', '첫 동기 완료');
+      setCloudStatus('synced', '방금');
+      lastSyncAt = Date.now();
     }
   } catch (e) {
     showSyncIndicator('error', '동기 오류 — ' + (e.message || ''));
@@ -472,6 +624,8 @@ async function pushToCloud() {
   } catch (e) {
     showSyncIndicator('error', '저장 실패 — ' + (e.message || ''));
     setCloudStatus('error', '저장 실패');
+    // 큰 경고 띠로 사용자에게 명확히 알림 (silent fail 금지)
+    showSyncErrorBanner('클라우드 저장 실패 — ' + (e.message || '네트워크/권한 확인'));
     setTimeout(hideSyncIndicator, 3000);
   }
 }
@@ -1796,6 +1950,8 @@ function setupEventDelegation() {
       case 'cancel-goal': cancelDailyGoal(); break;
       case 'skip-login': skipCloudSync(); break;
       case 'cloud-login': openCloudLogin(); break;
+      case 'cloud-status': openCloudStatus(); break;
+      case 'dismiss-error': hideSyncErrorBanner(); break;
     }
   });
 
@@ -1934,5 +2090,12 @@ async function pullFromCloudGently() {
     }
   } catch(e) {}
 }
+
+// HTML inline onclick에서 호출 가능하게 전역 노출
+window.forcePullFromCloud = forcePullFromCloud;
+window.forcePushToCloud = forcePushToCloud;
+window.cloudLogout = cloudLogout;
+window.openCloudLogin = openCloudLogin;
+window.closeAllModals = closeAllModals;
 
 document.addEventListener('DOMContentLoaded', init);

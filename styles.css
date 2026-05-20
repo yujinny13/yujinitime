@@ -88,6 +88,69 @@ em { font-style: normal; }
 .tabs .cloud-status-btn.syncing { background: rgba(207,69,0,0.12); color: var(--signal) !important; }
 .tabs .cloud-status-btn.error { background: rgba(207,69,0,0.18); color: var(--urgent) !important; }
 .tabs .cloud-status-btn.local { background: rgba(105,105,105,0.12); color: var(--muted) !important; }
+
+/* ============= SYNC ERROR BANNER ============= */
+.sync-error-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 400;
+  padding: 12px 20px; background: var(--urgent); color: #fff;
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  font-size: 14px; letter-spacing: -0.015em; font-weight: 500;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.sync-error-banner button {
+  padding: 6px 14px; background: rgba(255,255,255,0.2);
+  color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 999px;
+  font-family: inherit; font-size: 13px; cursor: pointer;
+  font-weight: 500;
+}
+.sync-error-banner button:hover { background: rgba(255,255,255,0.3); }
+
+/* ============= CLOUD STATUS MODAL ============= */
+.cloud-status-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  margin: 14px 0 8px;
+}
+.cloud-status-card {
+  padding: 16px; border-radius: 14px; background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+.cloud-status-card.diff { border-color: var(--urgent); background: rgba(207,69,0,0.04); }
+.cloud-status-card .csc-label {
+  font-size: 10px; color: var(--signal); letter-spacing: 0.14em;
+  font-weight: 500; text-transform: uppercase; margin-bottom: 10px;
+}
+.cloud-status-card .csc-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 4px 0; font-size: 13px;
+}
+.cloud-status-card .csc-row .k { color: var(--muted); font-size: 11px; }
+.cloud-status-card .csc-row .v { font-family: 'Sofia Sans', sans-serif; font-weight: 500; color: var(--ink); }
+.cloud-status-card .csc-time {
+  font-size: 11px; color: var(--slate); margin-top: 6px;
+  padding-top: 6px; border-top: 1px dashed var(--border);
+  letter-spacing: -0.02em;
+}
+.cloud-warn {
+  margin: 12px 0; padding: 12px 14px;
+  background: rgba(207,69,0,0.08); color: var(--urgent);
+  border-radius: 10px; font-size: 13px; letter-spacing: -0.015em;
+  line-height: 1.5; font-weight: 500;
+}
+.cloud-actions-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px;
+}
+.cloud-actions-grid button {
+  padding: 12px 14px; border-radius: 14px; font-family: inherit; font-size: 14px;
+  cursor: pointer; font-weight: 500; letter-spacing: -0.01em;
+  border: 1.5px solid var(--ink); background: var(--card); color: var(--ink);
+  transition: all 0.15s;
+}
+.cloud-actions-grid button:hover { background: var(--ink); color: #fff; }
+.cloud-actions-grid button.primary { background: var(--ink); color: #fff; }
+.cloud-actions-grid button.primary:hover { background: var(--signal); border-color: var(--signal); }
+.cloud-actions-grid button.danger { border-color: var(--urgent); color: var(--urgent); }
+.cloud-actions-grid button.danger:hover { background: var(--urgent); color: #fff; }
+.cloud-loading { text-align: center; padding: 30px; color: var(--muted); font-size: 13px; }
 .user { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
 .user .date { font-weight: 500; letter-spacing: 0.04em; font-size: 13px; }
 
