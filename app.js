@@ -59,6 +59,11 @@ const DEFAULT_STATE = {
       { name: '글쓰기', color: '#B0CC8A' },
       { name: '취침', color: '#B5ADA0' },
       { name: '기타', color: '#7A9F65' }
+    ],
+    friends: [
+      { name: '친구', color: '#F0A6BD' },
+      { name: '가족', color: '#E472A0' },
+      { name: '데이트', color: '#C13B6F' }
     ]
   },
   // timeBlocks[date] = [{ hour, slot, span, type, label }]
@@ -91,14 +96,15 @@ function colorToCategory(hex) {
   if (c.family === 'warm') return 'money';
   if (c.family === 'blue') return 'promote';
   if (c.family === 'green') return 'life';
+  if (c.family === 'pink') return 'friends';
   return 'money';
 }
 
 function normalizeTimerPresets(presets) {
   if (!presets || typeof presets !== 'object') return null;
-  const DEFAULT_COLOR_BY_CAT = { money: '#CF4500', promote: '#3860BE', life: '#4A7060' };
+  const DEFAULT_COLOR_BY_CAT = { money: '#CF4500', promote: '#3860BE', life: '#4A7060', friends: '#E472A0' };
   const out = {};
-  ['money', 'promote', 'life'].forEach(cat => {
+  ['money', 'promote', 'life', 'friends'].forEach(cat => {
     out[cat] = (presets[cat] || []).map(p => {
       if (typeof p === 'string') {
         return { name: p, color: DEFAULT_COLOR_BY_CAT[cat] };
@@ -175,34 +181,43 @@ function saveState() {
   } catch (e) {
     console.warn('Save failed:', e);
   }
-  if (cloudReady && currentSession && !skipCloud) cloudSyncDebounced();
+  // 클라우드 pull 완료 전엔 절대 push 안 함 (race condition 방지)
+  if (cloudReady && currentSession && !skipCloud && cloudPullDone) cloudSyncDebounced();
 }
 
 // ============= SUPABASE AUTH + SYNC =============
 async function initCloud() {
+  // Nav UI 항상 업데이트
+  updateNavCloudUI();
+
   if (!window.supabase) {
     console.warn('Supabase SDK 미로드 — 오프라인 모드');
+    setCloudStatus('local', '로컬 모드');
     return;
   }
-  // 사용자가 "이 기기에서만" 골랐는지 확인
-  if (localStorage.getItem('yujinitime-skip-cloud') === '1') {
-    skipCloud = true;
-    return;
-  }
+  // "이 기기에서만" 골랐는지 확인 — skip이어도 supa는 만들어둠 (나중에 풀고 로그인 가능하게)
+  const isSkipping = localStorage.getItem('yujinitime-skip-cloud') === '1';
   supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: 'yujinitime-auth' // wealthy-life와 분리
+      storageKey: 'yujinitime-auth'
     }
   });
+  if (isSkipping) {
+    skipCloud = true;
+    updateNavCloudUI();
+    return;
+  }
+
   const { data: { session } } = await supa.auth.getSession();
   currentSession = session;
   cloudReady = true;
 
   supa.auth.onAuthStateChange(async (event, session) => {
     currentSession = session;
+    updateNavCloudUI();
     if (event === 'SIGNED_IN') {
       hideLogin();
       await pullFromCloud();
@@ -219,6 +234,63 @@ async function initCloud() {
     await pullFromCloud();
     renderDaily();
   }
+  updateNavCloudUI();
+}
+
+function updateNavCloudUI() {
+  const loginBtn = document.getElementById('cloud-login-btn');
+  const statusBtn = document.getElementById('cloud-status-btn');
+  if (!loginBtn || !statusBtn) return;
+  // skip 모드 or 로그인 안 됨 → 로그인 버튼 보이기
+  if (skipCloud || (!currentSession && cloudReady)) {
+    loginBtn.removeAttribute('hidden');
+    statusBtn.setAttribute('hidden', '');
+  } else if (currentSession) {
+    loginBtn.setAttribute('hidden', '');
+    statusBtn.removeAttribute('hidden');
+    // 마지막 동기 시각
+    const ts = lastSyncAt ? formatTimeAgo(lastSyncAt) : '대기';
+    statusBtn.textContent = '☁ ' + ts;
+  } else {
+    loginBtn.setAttribute('hidden', '');
+    statusBtn.setAttribute('hidden', '');
+  }
+}
+
+function setCloudStatus(cls, text) {
+  const statusBtn = document.getElementById('cloud-status-btn');
+  if (statusBtn) {
+    statusBtn.className = 'tab-tool cloud-status-btn ' + cls;
+    if (text) {
+      statusBtn.textContent = '☁ ' + text;
+      statusBtn.removeAttribute('hidden');
+    }
+  }
+}
+
+function formatTimeAgo(ts) {
+  const sec = Math.floor((Date.now() - ts) / 1000);
+  if (sec < 60) return '방금';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return min + '분 전';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + '시간 전';
+  return Math.floor(h / 24) + '일 전';
+}
+
+let lastSyncAt = null;
+
+function openCloudLogin() {
+  // skip 모드 해제하고 로그인 화면 보여주기
+  localStorage.removeItem('yujinitime-skip-cloud');
+  skipCloud = false;
+  if (!supa) {
+    // Supabase 초기화 안 됐으면 페이지 리로드
+    location.reload();
+    return;
+  }
+  cloudReady = true;
+  showLogin();
 }
 
 function showLogin() {
@@ -271,9 +343,14 @@ function skipCloudSync() {
   hideLogin();
 }
 
+// 편집 잠금 — 클라우드 pull 완료 전 push 막기
+let cloudPullDone = false;
+
 async function pullFromCloud() {
   if (!supa || !currentSession) return;
+  cloudPullDone = false;
   showSyncIndicator('syncing', '동기 중...');
+  setCloudStatus('syncing', '동기 중');
   try {
     const { data, error } = await supa
       .from(CLOUD_TABLE)
@@ -281,17 +358,18 @@ async function pullFromCloud() {
       .eq('user_id', currentSession.user.id)
       .maybeSingle();
     if (error) {
-      // 테이블이 없으면 안내
       if (String(error.message).toLowerCase().includes('does not exist') ||
           String(error.code) === '42P01' ||
           String(error.message).toLowerCase().includes('schema cache')) {
         showSyncIndicator('error', '⚠ 테이블 없음 — Supabase에서 SQL 실행 필요');
+        setCloudStatus('error', '테이블 없음');
         setTimeout(hideSyncIndicator, 6000);
         return;
       }
       throw error;
     }
     if (data && data.state && Object.keys(data.state).length > 0) {
+      // 클라우드 데이터 있음 → 무조건 클라우드 우선 (로컬 덮어쓰기)
       state = Object.assign({}, deepClone(DEFAULT_STATE), data.state);
       state.timerPresets = Object.assign({}, deepClone(DEFAULT_STATE.timerPresets), state.timerPresets || {});
       state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
@@ -299,15 +377,35 @@ async function pullFromCloud() {
       state.dailyGoals = state.dailyGoals || {};
       state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      lastSyncAt = Date.now();
       showSyncIndicator('synced', '동기 완료');
+      setCloudStatus('synced', formatTimeAgo(lastSyncAt));
     } else {
-      // 클라우드 비어있음 — 로컬 데이터 푸시
-      await pushToCloud();
-      showSyncIndicator('synced', '첫 동기 완료');
+      // 클라우드 비어있음 — 자동 push 안 함 (사용자 confirm 받음)
+      const hasLocal = Object.keys(state.timeBlocks || {}).length > 0 || Object.keys(state.dailyGoals || {}).length > 0;
+      if (hasLocal) {
+        const ok = confirm('☁ 클라우드가 비어있어. 이 기기의 로컬 데이터를 클라우드에 올릴까?\n\n(취소 누르면 클라우드는 비어있고 이 기기 데이터로만 작업 — 위험)');
+        if (ok) {
+          await pushToCloud();
+          showSyncIndicator('synced', '첫 동기 완료');
+          setCloudStatus('synced', '방금');
+          lastSyncAt = Date.now();
+        } else {
+          showSyncIndicator('error', '클라우드 비어있음 — push 안 함');
+          setCloudStatus('local', '동기 안 됨');
+        }
+      } else {
+        // 로컬도 비어있으면 그냥 빈 상태에서 시작
+        showSyncIndicator('synced', '클라우드 비어있음 — 새로 시작');
+        setCloudStatus('synced', '시작');
+      }
     }
   } catch (e) {
-    showSyncIndicator('error', '동기 오류 (오프라인 모드)');
+    showSyncIndicator('error', '동기 오류 — ' + (e.message || ''));
+    setCloudStatus('error', '오류');
   }
+  cloudPullDone = true;
+  updateNavCloudUI();
   setTimeout(hideSyncIndicator, 2500);
 }
 
@@ -319,7 +417,13 @@ function cloudSyncDebounced() {
 
 async function pushToCloud() {
   if (!supa || !currentSession) return;
+  // pull 안 끝났으면 push 안 함 (race 방지)
+  if (!cloudPullDone) {
+    console.warn('Push 보류 — 클라우드 pull 미완료');
+    return;
+  }
   showSyncIndicator('syncing', '저장 중...');
+  setCloudStatus('syncing', '저장 중');
   try {
     const { error } = await supa
       .from(CLOUD_TABLE)
@@ -329,11 +433,14 @@ async function pushToCloud() {
         updated_at: new Date().toISOString()
       });
     if (error) throw error;
+    lastSyncAt = Date.now();
     showSyncIndicator('synced', '클라우드 저장됨');
+    setCloudStatus('synced', formatTimeAgo(lastSyncAt));
     setTimeout(hideSyncIndicator, 1500);
   } catch (e) {
-    showSyncIndicator('error', '저장 실패 (재시도 중)');
-    setTimeout(hideSyncIndicator, 2500);
+    showSyncIndicator('error', '저장 실패 — ' + (e.message || ''));
+    setCloudStatus('error', '저장 실패');
+    setTimeout(hideSyncIndicator, 3000);
   }
 }
 
@@ -566,14 +673,6 @@ let timerInterval = null;
 
 function renderTimerPanel() {
   updateTimerDisplay();
-  const labelEl = $('#tp-task-label');
-  if (labelEl) labelEl.textContent = state.timer.currentLabel || '대기 중...';
-  const catLabels = { money: '💰 돈', promote: '📣 알림', life: '🌱 삶' };
-  const catEl = $('#tp-cat-pick');
-  if (catEl) {
-    catEl.textContent = catLabels[state.timer.currentCategory] || '💰 돈';
-    if (state.timer.currentColor) catEl.style.background = state.timer.currentColor + '22';
-  }
   const taskInput = $('#tp-task-input');
   if (taskInput && document.activeElement !== taskInput) {
     taskInput.value = state.timer.currentLabel || '';
@@ -585,7 +684,15 @@ function renderTimerPanel() {
     btn.classList.toggle('running', state.timer.running);
   }
   const disp = $('#tp-display');
-  if (disp) disp.classList.toggle('running', state.timer.running);
+  if (disp) {
+    disp.classList.toggle('running', state.timer.running);
+    // 현재 색 표시
+    if (state.timer.currentColor && state.timer.running) {
+      disp.style.color = state.timer.currentColor;
+    } else {
+      disp.style.color = '';
+    }
+  }
 }
 
 function renderTimerColorRow() {
@@ -619,7 +726,7 @@ function renderTimerPresets() {
   const row = $('#tp-presets-row');
   if (!row) return;
   row.innerHTML = '';
-  ['money', 'promote', 'life'].forEach(cat => {
+  ['money', 'promote', 'life', 'friends'].forEach(cat => {
     (state.timerPresets[cat] || []).forEach(p => {
       const name = p && p.name ? p.name : '';
       const color = p && p.color ? p.color : '#B5ADA0';
@@ -629,8 +736,10 @@ function renderTimerPresets() {
       b.dataset.cat = cat;
       b.dataset.name = name;
       b.dataset.color = color;
-      b.style.color = color;
-      b.style.borderColor = color + '55';
+      // 글씨는 검정으로 통일, 배경에 옅은 색
+      b.style.color = '#1F1B16';
+      b.style.background = color + '33';
+      b.style.borderColor = color + '88';
       b.addEventListener('click', () => {
         state.timer.currentLabel = name;
         state.timer.currentCategory = colorToCategory(color);
@@ -650,9 +759,10 @@ function openPresetsModal() {
   const list = $('#preset-edit-list');
   list.innerHTML = '';
   const cats = [
-    { id: 'money', name: '💰 돈을 번다' },
-    { id: 'promote', name: '📣 나를 알린다' },
-    { id: 'life', name: '🌱 삶을 산다' }
+    { id: 'money', name: '🟠 일' },
+    { id: 'promote', name: '🔵 알림' },
+    { id: 'life', name: '🟢 삶' },
+    { id: 'friends', name: '🩷 친구 / 가족' }
   ];
   cats.forEach(c => {
     const sec = el('div', 'preset-cat-section');
@@ -742,7 +852,7 @@ function openPresetsModal() {
         const v = input.value.trim();
         if (!v) return;
         if (!state.timerPresets[c.id]) state.timerPresets[c.id] = [];
-        const defaultColor = c.id === 'money' ? '#CF4500' : c.id === 'promote' ? '#3860BE' : '#4A7060';
+        const defaultColor = c.id === 'money' ? '#CF4500' : c.id === 'promote' ? '#3860BE' : c.id === 'life' ? '#4A7060' : '#E472A0';
         state.timerPresets[c.id].push({ name: v, color: defaultColor });
         saveState();
         openPresetsModal();
@@ -892,8 +1002,7 @@ function attributeTimerToHourly(durationMs, category, label, colorHex) {
   const startSlot = Math.floor(startRounded.getMinutes() / 10);
   const totalSlots = Math.max(1, Math.ceil(minutes / 10));
   const blockType = (colorHex && colorHex.startsWith('#')) ? colorHex : category;
-  const icon = category === 'money' ? '💰 ' : category === 'promote' ? '📣 ' : '🌱 ';
-  const fullLabel = (label || '몰입').startsWith(icon.trim()) ? label : icon + (label || '몰입');
+  const fullLabel = label || '몰입';
 
   let remaining = totalSlots;
   let h = startHour;
@@ -931,8 +1040,14 @@ const PASTEL_COLORS = [
   { name: '연두',     hex: '#B0CC8A', family: 'green' },
   { name: '풀잎',     hex: '#7A9F65', family: 'green' },
   { name: '진녹',     hex: '#4A7060', family: 'green' },
+  { name: '연분홍',   hex: '#F8D1DD', family: 'pink' },
+  { name: '분홍',     hex: '#F0A6BD', family: 'pink' },
+  { name: '진분홍',   hex: '#E472A0', family: 'pink' },
+  { name: '자주',     hex: '#C13B6F', family: 'pink' },
   { name: '회색',     hex: '#B5ADA0', family: 'gray' }
 ];
+
+function isMobile() { return window.innerWidth <= 768; }
 
 function renderHourlyTable() {
   const grid = $('#tt-grid');
@@ -940,7 +1055,10 @@ function renderHourlyTable() {
   grid.innerHTML = '';
   grid.appendChild(el('div', 'hh', ''));
   ['00','10','20','30','40','50'].forEach(t => grid.appendChild(el('div', 'ch', ':' + t)));
-  const hours = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5];
+  // 모바일: 6-23시 (18시간), 데스크톱: 24시간
+  const hours = isMobile()
+    ? [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23]
+    : [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5];
   const today = curDate();
   const blocks = state.timeBlocks[today] || [];
 
@@ -1187,14 +1305,15 @@ function openHourlyModal(startHour, startSlot, endHour, endSlot) {
   const presetRow = $('#modal-hourly-presets');
   if (presetRow) {
     presetRow.innerHTML = '';
-    ['money', 'promote', 'life'].forEach(cat => {
+    ['money', 'promote', 'life', 'friends'].forEach(cat => {
       (state.timerPresets[cat] || []).forEach(p => {
         if (!p || !p.name) return;
         const b = el('button', 'modal-preset-chip');
         b.textContent = p.name;
         b.dataset.color = p.color || '#CF4500';
-        b.style.color = p.color;
-        b.style.borderColor = (p.color || '#CCC') + '66';
+        b.style.color = '#1F1B16';
+        b.style.background = (p.color || '#CCC') + '33';
+        b.style.borderColor = (p.color || '#CCC') + '88';
         b.addEventListener('click', () => {
           $('#modal-hourly-label').value = p.name;
           $$('#modal-hourly-pastel .sw').forEach(s => {
@@ -1311,12 +1430,33 @@ function renderWeekly() {
   renderWeeklyHourly(monday);
 }
 
+// 라벨 정규화: 괄호 () 앞 + 첫 단어로 그룹
+function normalizeLabel(label) {
+  if (!label) return '(빈칸)';
+  // "다이어리 제작 (구성품)" → "다이어리 제작"
+  let s = String(label).replace(/\s*[\(（][^\)）]*[\)）]\s*/g, '').trim();
+  if (!s) s = String(label).trim();
+  // 첫 단어 (공백 기준)
+  const first = s.split(/\s+/)[0];
+  // "메일 확인" + "메일 답장" → "메일"
+  // 단, 첫 단어가 너무 짧으면 (1글자) 그대로 유지
+  return first.length >= 2 ? first : s;
+}
+
 function renderWeeklyHourly(monday) {
   const cont = $('#weekly-hourly');
   if (!cont) return;
-  cont.innerHTML = `<div class="wh-title">7-DAY HOURLY · 일주일치 시간 한눈에</div>`;
-  const table = el('div', 'wh-table');
+  cont.innerHTML = `<div class="wh-title">7-DAY HOURLY · 일주일치 시간 한눈에 (10분 단위)</div>`;
+  // 가로 스크롤 가능한 컨테이너
+  const scroll = el('div', 'wh-scroll');
+  const table = el('div', 'wh-detail-table');
   const dows = ['MON','TUE','WED','THU','FRI','SAT','SUN'];
+  // 24개 헤더 (시간) + 데이터
+  // 그리드: 시간 라벨 32px + 7일 (각 day는 6 slot)
+  // 총 컬럼: 1 (시간) + 7*1 = 8 (각 day는 한 컬럼 안에 6 slot을 나누어 가짐)
+  // → 더 간단하게: 각 day마다 6 slot 컬럼 = 시간 + 42 슬롯
+  // 가로 폭 매우 넓어짐. 대신 셀 작게.
+
   table.appendChild(el('div', 'wh-corner', ''));
   for (let i = 0; i < 7; i++) {
     const date = addDays(monday, i);
@@ -1330,59 +1470,128 @@ function renderWeeklyHourly(monday) {
     head.innerHTML = `${dows[i]}<span class="dn">${date.getDate()}</span>${goalHtml}`;
     table.appendChild(head);
   }
-  const hours = [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5];
+
+  // 시간: 모바일은 6-23시, 데스크톱은 24시간
+  const hours = isMobile()
+    ? [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23]
+    : [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,0,1,2,3,4,5];
+
   hours.forEach(hour => {
     table.appendChild(el('div', 'wh-hr', String(hour).padStart(2, '0')));
     for (let i = 0; i < 7; i++) {
       const date = addDays(monday, i);
       const dateStr = fmtDate(date);
       const blocks = state.timeBlocks[dateStr] || [];
-      const hourBlocks = blocks.filter(b => b.hour === hour);
-      let dominantType = 'empty';
-      let label = '';
-      let totalSlots = 0;
-      let typeCounts = {};
-      hourBlocks.forEach(b => {
-        const cnt = (b.span || 1);
-        typeCounts[b.type] = (typeCounts[b.type] || 0) + cnt;
-        totalSlots += cnt;
-        if (!label && b.label) label = b.label;
-      });
-      let max = 0;
-      Object.entries(typeCounts).forEach(([t, c]) => {
-        if (c > max) { max = c; dominantType = t; }
-      });
-      const cell = el('div', 'wh-cell');
-      if (totalSlots > 0) {
-        if (dominantType === 'money') cell.classList.add('money');
-        else if (dominantType === 'promote') cell.classList.add('promote');
-        else if (dominantType === 'life') cell.classList.add('life');
-        else if (dominantType && dominantType.startsWith('#')) {
-          cell.style.background = dominantType;
-          cell.style.color = '#4D4030';
+      // 각 일 셀 안에 6 미니슬롯
+      const dayCell = el('div', 'wh-day-cell');
+      for (let slot = 0; slot < 6; slot++) {
+        const owning = blocks.find(b => b.hour === hour && b.slot <= slot && (b.slot + b.span) > slot);
+        const mini = el('div', 'wh-mini-slot');
+        if (owning) {
+          const isFirst = owning.slot === slot;
+          if (owning.type === 'money') mini.style.background = 'var(--money)';
+          else if (owning.type === 'promote') mini.style.background = 'var(--promote)';
+          else if (owning.type === 'life') mini.style.background = 'var(--life)';
+          else if (owning.type === 'friends') mini.style.background = 'var(--friends)';
+          else if (owning.type && owning.type.startsWith('#')) {
+            mini.style.background = owning.type;
+          }
+          if (isFirst && owning.label) {
+            const lbl = el('span', 'wh-mini-label');
+            lbl.textContent = owning.label;
+            lbl.style.maxWidth = `${(owning.span || 1) * 28}px`;
+            mini.appendChild(lbl);
+            mini.title = owning.label;
+          }
         }
-        cell.style.opacity = Math.min(1, 0.55 + (totalSlots / 6) * 0.45);
-        if (label) {
-          cell.textContent = label.length > 14 ? label.slice(0, 13) + '…' : label;
-          cell.title = label;
-        }
-      } else {
-        cell.classList.add('empty');
+        dayCell.appendChild(mini);
       }
-      table.appendChild(cell);
+      table.appendChild(dayCell);
     }
   });
-  cont.appendChild(table);
+  scroll.appendChild(table);
+  cont.appendChild(scroll);
 
-  const legend = el('div', 'tt-legend');
-  legend.style.marginTop = '12px';
-  legend.innerHTML = `
-    <div class="lg"><span class="sw-mini" style="background:var(--money)"></span>돈</div>
-    <div class="lg"><span class="sw-mini" style="background:var(--promote)"></span>알림</div>
-    <div class="lg"><span class="sw-mini" style="background:var(--life)"></span>삶</div>
-    <div class="lg" style="opacity:0.6">투명도 = 그 시간대 채워진 비율</div>
+  // 원형 차트 (라벨별 시간 누적)
+  renderWeeklyStats(monday, cont);
+}
+
+function renderWeeklyStats(monday, parent) {
+  // 일주일치 모든 timeBlocks 모아서 라벨별 분단위 합
+  const labelMinutes = {};
+  const labelColor = {}; // 대표 색
+  for (let i = 0; i < 7; i++) {
+    const date = addDays(monday, i);
+    const dateStr = fmtDate(date);
+    const blocks = state.timeBlocks[dateStr] || [];
+    blocks.forEach(b => {
+      const minutes = (b.span || 1) * 10;
+      const grp = normalizeLabel(b.label);
+      labelMinutes[grp] = (labelMinutes[grp] || 0) + minutes;
+      if (!labelColor[grp]) {
+        labelColor[grp] = (b.type && b.type.startsWith('#'))
+          ? b.type
+          : (b.type === 'money' ? '#CF4500'
+             : b.type === 'promote' ? '#3860BE'
+             : b.type === 'life' ? '#4A7060'
+             : b.type === 'friends' ? '#E472A0'
+             : '#B5ADA0');
+      }
+    });
+  }
+  const entries = Object.entries(labelMinutes).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, [_, m]) => s + m, 0);
+  if (total === 0) {
+    const empty = el('div', 'wh-stats-empty', '아직 채워진 시간 없음 — 시간표를 채우면 통계 보여줘.');
+    parent.appendChild(empty);
+    return;
+  }
+  const statsBox = el('div', 'wh-stats');
+  statsBox.innerHTML = `<div class="wh-stats-title cor">WEEKLY · 라벨별 시간 분포</div>`;
+
+  // SVG 도넛 차트
+  const size = 220;
+  const r = 70;
+  const stroke = 28;
+  const cx = size / 2, cy = size / 2;
+  const circ = 2 * Math.PI * r;
+  let offset = 0;
+  let segs = '';
+  entries.forEach(([label, mins]) => {
+    const frac = mins / total;
+    const len = frac * circ;
+    segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${labelColor[label]}" stroke-width="${stroke}" stroke-dasharray="${len} ${circ - len}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"><title>${escapeHtml(label)}: ${formatHours(mins)}</title></circle>`;
+    offset += len;
+  });
+  const chartWrap = el('div', 'wh-chart-wrap');
+  chartWrap.innerHTML = `
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+      ${segs}
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-family="Sofia Sans" font-size="22" font-weight="500" fill="#1F1B16">${formatHours(total)}</text>
+      <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-family="Sofia Sans" font-size="10" fill="#696969" letter-spacing="0.1em">TOTAL · 합계</text>
+    </svg>
   `;
-  cont.appendChild(legend);
+  const legendBox = el('div', 'wh-chart-legend');
+  entries.forEach(([label, mins]) => {
+    const pct = Math.round(mins / total * 100);
+    const row = el('div', 'wh-legend-row');
+    row.innerHTML = `
+      <span class="wh-legend-sw" style="background:${labelColor[label]}"></span>
+      <span class="wh-legend-label">${escapeHtml(label)}</span>
+      <span class="wh-legend-time">${formatHours(mins)} · ${pct}%</span>
+    `;
+    legendBox.appendChild(row);
+  });
+  statsBox.appendChild(chartWrap);
+  statsBox.appendChild(legendBox);
+  parent.appendChild(statsBox);
+}
+
+function formatHours(min) {
+  if (min < 60) return min + '분';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
 // =================================================================
@@ -1497,6 +1706,7 @@ function setupEventDelegation() {
       case 'save-goal': saveDailyGoal(); break;
       case 'cancel-goal': cancelDailyGoal(); break;
       case 'skip-login': skipCloudSync(); break;
+      case 'cloud-login': openCloudLogin(); break;
     }
   });
 
@@ -1543,10 +1753,26 @@ function setupEventDelegation() {
 // =================================================================
 // INIT
 // =================================================================
+let resizeTimeout = null;
+let wasMobile = isMobile();
+function handleResize() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(() => {
+    const nowMobile = isMobile();
+    if (nowMobile !== wasMobile) {
+      wasMobile = nowMobile;
+      const page = state.meta.currentPage || 'daily';
+      if (page === 'daily') renderHourlyTable();
+      else if (page === 'weekly') renderWeekly();
+    }
+  }, 200);
+}
+
 function init() {
   setupEventDelegation();
   setupTaskInput();
   initRouter();
+  window.addEventListener('resize', handleResize);
   // Resume timer interval if running
   if (state.timer.running && state.timer.startedAt) {
     if (timerInterval) clearInterval(timerInterval);
@@ -1554,6 +1780,8 @@ function init() {
   }
   // Cloud sync 시작 (Supabase SDK 로드 후)
   initCloud().catch(e => console.warn('cloud init failed:', e));
+  // 1분마다 동기 시각 업데이트
+  setInterval(updateNavCloudUI, 60000);
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=1280">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-<link rel="stylesheet" href="styles.css?v=1.1.0">
+<link rel="stylesheet" href="styles.css?v=1.2.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -50,6 +50,8 @@
       <a class="tab-tool" data-action="export-data" title="JSON 백업 다운로드">⤓</a>
       <a class="tab-tool" data-action="import-data" title="JSON 복원">⤒</a>
       <a class="tab-tool" data-action="auto-backups" title="자동 백업 (최근 24개)">⟲</a>
+      <a class="tab-tool cloud-login-btn" id="cloud-login-btn" data-action="cloud-login" title="클라우드 로그인" hidden>☁ 로그인</a>
+      <a class="tab-tool cloud-status-btn" id="cloud-status-btn" data-action="cloud-status" title="클라우드 동기 상태" hidden></a>
     </div>
     <div class="user">
       <span class="date" id="nav-date">2026 · 05 · 18 · MON</span>
@@ -104,12 +106,18 @@
       </section>
     </div>
 
-    <!-- 우측: TIME PANEL -->
+    <!-- 우측: TIME PANEL (모바일에선 맨 위) -->
     <aside class="timepanel-wrap">
       <aside class="timepanel">
         <div class="tp-header">
-          <div class="tp-title"><span class="cor">FOCUS TIMER</span></div>
-          <!-- 1) 자주 하는 일 -->
+          <div class="tp-title cor">FOCUS TIMER</div>
+          <!-- 1) 타이머 숫자 (맨 위) -->
+          <div class="tp-timer" id="tp-display">00 : 00 : 00</div>
+          <!-- 2) 직접 입력 -->
+          <input type="text" class="tp-task-input" id="tp-task-input" placeholder="지금 뭐 하는지 적기" />
+          <!-- 3) 색 picker -->
+          <div class="tp-color-row" id="tp-color-row"></div>
+          <!-- 4) 자주 하는 일 PRESETS -->
           <div class="tp-presets">
             <div class="tp-presets-head">
               <div class="tp-presets-title cor">PRESETS · 자주 하는 일</div>
@@ -117,18 +125,6 @@
             </div>
             <div class="tp-presets-row" id="tp-presets-row"></div>
           </div>
-          <!-- 2) 직접 입력 -->
-          <div class="tp-custom">
-            <input type="text" class="tp-task-input" id="tp-task-input" placeholder="없으면 직접 적기" />
-            <div class="tp-color-row" id="tp-color-row"></div>
-          </div>
-          <!-- 3) 현재 라벨 + 카테고리 -->
-          <div class="tp-current" id="tp-current">
-            <span id="tp-task-label">대기 중...</span>
-            <span class="tp-cat-pick" id="tp-cat-pick">💰 돈</span>
-          </div>
-          <!-- 4) 타이머 -->
-          <div class="tp-timer" id="tp-display">00 : 00 : 00</div>
           <!-- 5) 시작/지우기 -->
           <div class="tp-buttons">
             <button class="btn btn-gold" id="btn-timer-start" data-action="timer-start">▶ 시작</button>
@@ -220,6 +216,6 @@
 
 <input type="file" id="import-file" accept=".json" hidden />
 
-<script src="app.js?v=1.1.0"></script>
+<script src="app.js?v=1.2.0"></script>
 </body>
 </html>

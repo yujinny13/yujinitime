@@ -15,6 +15,7 @@
   --money:     #CF4500;
   --promote:   #3860BE;
   --life:      #4A7060;
+  --friends:   #E472A0;
   --break:     #D1CDC7;
   --urgent:    #CF4500;
   --gold:      #B8945F;
@@ -72,6 +73,21 @@ em { font-style: normal; }
   border-radius: 999px; font-size: 14px; line-height: 1;
 }
 .tabs .tab-tool:hover { color: var(--signal); background: var(--bg); }
+.tabs .cloud-login-btn {
+  font-size: 12px; padding: 6px 12px;
+  background: var(--signal); color: #fff !important;
+  border-radius: 999px; font-weight: 500;
+}
+.tabs .cloud-login-btn:hover { background: var(--ink); color: #fff !important; }
+.tabs .cloud-status-btn {
+  font-size: 11px; padding: 5px 12px;
+  background: rgba(74,112,96,0.12); color: var(--life) !important;
+  border-radius: 999px; font-weight: 500;
+  cursor: default;
+}
+.tabs .cloud-status-btn.syncing { background: rgba(207,69,0,0.12); color: var(--signal) !important; }
+.tabs .cloud-status-btn.error { background: rgba(207,69,0,0.18); color: var(--urgent) !important; }
+.tabs .cloud-status-btn.local { background: rgba(105,105,105,0.12); color: var(--muted) !important; }
 .user { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
 .user .date { font-weight: 500; letter-spacing: 0.04em; font-size: 13px; }
 
@@ -186,24 +202,12 @@ em { font-style: normal; }
   background: var(--card); border: 1px solid var(--border);
   border-radius: 24px; box-shadow: var(--shadow); overflow: hidden;
 }
-.tp-header { padding: 18px 20px 16px; }
-.tp-title { font-size: 10px; color: var(--signal); margin-bottom: 12px; font-weight: 500; }
-.tp-current {
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: 11.5px; color: var(--muted); margin-bottom: 8px;
-  letter-spacing: -0.015em; min-height: 18px;
-}
-.tp-current #tp-task-label {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.tp-cat-pick {
-  font-size: 10px; padding: 3px 8px; background: var(--bg);
-  color: var(--signal); border-radius: 999px;
-  letter-spacing: -0.01em;
-}
+.tp-header { padding: 20px 22px 18px; }
+.tp-title { font-size: 11px; color: var(--signal); margin-bottom: 14px; font-weight: 500; letter-spacing: 0.16em; }
 .tp-timer {
-  font-size: 38px; font-weight: 500; letter-spacing: -0.02em;
-  text-align: center; margin: 6px 0 16px;
+  font-size: 44px; font-weight: 500; letter-spacing: -0.02em;
+  text-align: center; margin: 0 0 18px;
+  transition: color 0.2s;
 }
 .tp-timer.running { color: var(--signal); }
 .tp-buttons { display: flex; gap: 6px; }
@@ -223,16 +227,16 @@ em { font-style: normal; }
 }
 
 .tp-task-input {
-  width: 100%; padding: 9px 12px; margin-bottom: 8px;
-  border: 1px solid var(--border); border-radius: 10px;
-  font-family: inherit; font-size: 13px; color: var(--ink);
-  outline: none; letter-spacing: -0.02em; background: var(--bg);
+  width: 100%; padding: 11px 14px; margin-bottom: 10px;
+  border: 1.5px solid var(--border); border-radius: 12px;
+  font-family: inherit; font-size: 14px; color: var(--ink);
+  outline: none; letter-spacing: -0.02em; background: var(--bg-2);
 }
-.tp-task-input:focus { border-color: var(--signal); }
+.tp-task-input:focus { border-color: var(--ink); background: var(--card); }
 
 .tp-presets {
-  margin-bottom: 10px; padding-bottom: 12px;
-  border-bottom: 1px dashed var(--border);
+  margin-top: 14px; margin-bottom: 12px;
+  padding-top: 14px; border-top: 1px dashed var(--border);
 }
 .tp-presets-head {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
@@ -246,17 +250,18 @@ em { font-style: normal; }
   display: flex; flex-wrap: wrap; gap: 5px;
 }
 .tp-preset-btn {
-  font-size: 11.5px; padding: 4px 10px; background: var(--bg);
+  font-size: 12px; padding: 5px 12px;
   border: 1px solid var(--border); border-radius: 999px;
-  font-family: inherit; cursor: pointer; color: var(--ink);
+  font-family: inherit; cursor: pointer;
   letter-spacing: -0.01em; transition: all 0.12s;
+  font-weight: 500;
+  color: var(--ink) !important;
 }
-.tp-preset-btn:hover { background: var(--card); }
+.tp-preset-btn:hover { transform: translateY(-1px); filter: brightness(0.95); }
 
-/* 타이머 직접 입력 + 색 picker */
-.tp-custom { margin-top: 6px; }
+/* 색 picker */
 .tp-color-row {
-  display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
+  display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;
   align-items: center;
 }
 .tp-color-row .sw {
@@ -412,6 +417,112 @@ em { font-style: normal; }
 .wh-cell.money { background: var(--money); }
 .wh-cell.promote { background: var(--promote); }
 .wh-cell.life { background: var(--life); }
+.wh-cell.friends { background: var(--friends); }
+
+/* ============= 7-DAY DETAIL GRID (10분 단위) ============= */
+.wh-scroll { overflow-x: auto; }
+.wh-detail-table {
+  display: grid;
+  grid-template-columns: 36px repeat(7, minmax(160px, 1fr));
+  gap: 0;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  background: white;
+  min-width: 100%;
+}
+.wh-detail-table .wh-corner,
+.wh-detail-table .wh-day-head {
+  font-family: 'Sofia Sans', sans-serif; font-size: 10px; color: var(--muted);
+  text-align: center; padding: 8px 6px 10px; background: #FBF9F4;
+  border-bottom: 1px solid var(--border); letter-spacing: 0.06em;
+  border-right: 1px solid var(--border);
+}
+.wh-detail-table .wh-day-head:last-of-type { border-right: none; }
+.wh-detail-table .wh-day-head.today { background: var(--bg); color: var(--ink); font-weight: 500; }
+.wh-detail-table .wh-day-head .dn { display: block; font-size: 14px; color: var(--ink); margin-top: 2px; font-weight: 500; }
+.wh-detail-table .wh-day-head .dgoal {
+  display: block; font-size: 11px; color: var(--ink);
+  font-weight: 450; letter-spacing: -0.02em;
+  margin-top: 6px; padding: 5px 6px;
+  background: rgba(207,69,0,0.06); border-radius: 6px;
+  text-align: left; line-height: 1.35;
+  white-space: pre-wrap; word-break: break-word;
+  text-transform: none; min-height: 26px;
+}
+.wh-detail-table .wh-day-head .dgoal.empty {
+  color: var(--muted-2); background: transparent;
+  font-style: italic; font-size: 10px;
+}
+.wh-detail-table .wh-hr {
+  font-family: 'Sofia Sans', sans-serif; font-size: 10px; color: var(--muted);
+  text-align: center; line-height: 24px;
+  border-right: 1px solid var(--border); background: #FBF9F4; letter-spacing: 0.04em;
+}
+.wh-detail-table .wh-day-cell {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  height: 24px; border-right: 1px solid var(--border);
+}
+.wh-detail-table .wh-day-cell:last-of-type { border-right: none; }
+.wh-mini-slot {
+  position: relative; height: 24px;
+  border-right: 1px solid rgba(255,255,255,0.2);
+}
+.wh-mini-slot:last-child { border-right: none; }
+.wh-mini-label {
+  position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  font-size: 10px; color: #fff; white-space: nowrap;
+  pointer-events: none; letter-spacing: -0.02em;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+.wh-day-cell .wh-mini-slot:not([style*="background"]) {
+  border-right-color: rgba(0,0,0,0.04);
+}
+
+/* ============= WEEKLY STATS DONUT ============= */
+.wh-stats {
+  margin-top: 22px; padding: 22px 24px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid; grid-template-columns: 240px 1fr; gap: 28px;
+  align-items: center;
+}
+.wh-stats-title {
+  grid-column: 1 / -1;
+  font-size: 11px; color: var(--signal); letter-spacing: 0.2em; margin-bottom: 4px;
+}
+.wh-stats-empty {
+  margin-top: 22px; padding: 20px; background: var(--bg-2);
+  border-radius: 12px; text-align: center; color: var(--muted);
+  font-size: 13px; letter-spacing: -0.015em;
+}
+.wh-chart-wrap { display: flex; justify-content: center; }
+.wh-chart-wrap svg { display: block; }
+.wh-chart-legend {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 260px; overflow-y: auto;
+}
+.wh-legend-row {
+  display: grid; grid-template-columns: 16px 1fr auto;
+  gap: 10px; align-items: center;
+  font-size: 13px; letter-spacing: -0.015em;
+  padding: 6px 10px; border-radius: 8px;
+  background: var(--card);
+}
+.wh-legend-sw { width: 14px; height: 14px; border-radius: 4px; }
+.wh-legend-label { color: var(--ink); font-weight: 500; }
+.wh-legend-time {
+  font-family: 'Sofia Sans', sans-serif; font-size: 12px;
+  color: var(--slate); letter-spacing: 0.02em;
+}
+@media (max-width: 768px) {
+  .wh-stats {
+    grid-template-columns: 1fr; gap: 14px; padding: 16px 18px;
+  }
+  .wh-chart-wrap svg { width: 200px; height: 200px; }
+  .wh-detail-table {
+    grid-template-columns: 32px repeat(7, minmax(140px, 1fr));
+  }
+}
 
 /* ============= MODAL — 자주 하는 일 chip row ============= */
 .modal-preset-row {
@@ -419,12 +530,13 @@ em { font-style: normal; }
   max-height: 130px; overflow-y: auto;
 }
 .modal-preset-chip {
-  padding: 5px 10px; font-size: 12px; background: var(--bg);
+  padding: 5px 12px; font-size: 12px;
   border: 1px solid var(--border); border-radius: 999px;
   font-family: inherit; cursor: pointer; letter-spacing: -0.01em;
-  transition: all 0.12s;
+  transition: all 0.12s; font-weight: 500;
+  color: var(--ink) !important;
 }
-.modal-preset-chip:hover { background: var(--card); transform: translateY(-1px); }
+.modal-preset-chip:hover { transform: translateY(-1px); filter: brightness(0.95); }
 .modal-preset-chip.active {
   background: var(--ink); color: #fff !important; border-color: var(--ink);
 }
@@ -611,6 +723,79 @@ em { font-style: normal; }
 .sync-indicator.syncing::before { content: '⟳ '; color: var(--signal); }
 .sync-indicator.synced::before { content: '✓ '; color: var(--life); }
 .sync-indicator.error::before { content: '! '; color: var(--urgent); }
+
+/* ============= MOBILE (≤768px) ============= */
+@media (max-width: 768px) {
+  .container { padding: 12px 14px 60px; max-width: 100%; }
+  .nav {
+    flex-wrap: wrap; padding: 10px 16px; border-radius: 22px;
+    gap: 6px;
+  }
+  .brand { font-size: 14px; }
+  .tabs { gap: 0; flex: 1; justify-content: center; }
+  .tabs a { padding: 6px 12px; font-size: 13px; }
+  .tabs .tab-sep { padding: 0 3px; font-size: 12px; }
+  .tabs .tab-tool { padding: 4px 6px; font-size: 13px; }
+  .user { display: none; }
+
+  .daily-date-nav { gap: 8px; margin-top: 14px; }
+  .daily-date-nav .dn-label { min-width: 0; font-size: 14px; padding: 6px 10px; }
+  .daily-date-nav .dn-btn { width: 32px; height: 32px; }
+  .daily-date-nav .dn-btn[data-action="day-today"] { padding: 0 10px; }
+
+  .goal-card { padding: 16px 18px; border-radius: 18px; }
+  .goal-display { font-size: 16px; }
+  .goal-display.empty { font-size: 13px; }
+  .goal-edit-box textarea { font-size: 15px; padding: 10px 14px; }
+
+  /* 일간: 타이머가 맨 위, 시간표가 아래 — 단일 컬럼 + DOM 순서 강제 */
+  .daily-shell {
+    display: flex; flex-direction: column;
+    gap: 14px; margin-top: 14px;
+  }
+  .timepanel-wrap {
+    order: 1; position: static;
+  }
+  .daily-main { order: 2; }
+
+  .timepanel { border-radius: 18px; }
+  .tp-header { padding: 16px 18px 14px; }
+  .tp-timer { font-size: 38px; margin-bottom: 12px; }
+  .tp-task-input { font-size: 16px; padding: 12px 14px; }
+  .btn { padding: 12px 14px; font-size: 15px; }
+
+  /* 시간표: 컴팩트, 6-23시 18시간만 (24시간 모드 toggle 가능) */
+  .tp-table-wrap { padding: 14px 16px; border-radius: 18px; }
+  .h-title { font-size: 10px; margin-bottom: 8px; }
+  .tt { grid-template-columns: 28px repeat(6, 1fr); }
+  .tt .hh, .tt .ch { font-size: 9px; padding: 4px 0; }
+  .tt .hr { font-size: 10px; line-height: 22px; }
+  .tt .cell-c { height: 22px; font-size: 10px; padding: 0 5px; }
+  .tt .cell-c .lbl-overflow { font-size: 10px; left: 5px; }
+  .palette-row { gap: 3px; }
+  .palette-row .sw { width: 16px; height: 16px; }
+  .palette-title { font-size: 8px; }
+  .tt-legend { font-size: 9px; gap: 8px; }
+
+  /* 주간: 가로 스크롤 */
+  .weekly-hourly { padding: 14px 16px; border-radius: 14px; overflow-x: auto; }
+  .wh-title { font-size: 11px; letter-spacing: 0.14em; margin-bottom: 10px; }
+  .ph-title { font-size: 22px; }
+  .ph-nav .btn-ghost { padding: 6px 12px; font-size: 12px; }
+  .page-head { flex-direction: column; align-items: stretch; gap: 12px; }
+
+  /* Modal */
+  .modal { padding: 24px 22px; border-radius: 24px; max-width: 100%; }
+  .modal-title { font-size: 18px; }
+  .modal input[type="text"], .modal input[type="time"], .modal textarea {
+    font-size: 16px; padding: 10px 14px;
+  }
+
+  /* Login */
+  .login-card { padding: 32px 24px; border-radius: 24px; }
+  .login-title { font-size: 22px; }
+  #login-form input, #login-form button { font-size: 15px; padding: 12px 14px; }
+}
 
 /* ============= TOAST ============= */
 .toast {
