@@ -808,4 +808,13 @@ em { font-style: normal; }
   max-width: 360px; font-weight: 450;
 }
 .toast em { color: var(--signal-light); font-weight: 500; }
+.toast-undo {
+  margin-left: 12px; padding: 6px 14px;
+  background: rgba(255,255,255,0.15); color: #fff;
+  border: 1px solid rgba(255,255,255,0.3); border-radius: 999px;
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  letter-spacing: -0.01em; font-weight: 500;
+  transition: all 0.15s;
+}
+.toast-undo:hover { background: var(--signal); border-color: var(--signal); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }

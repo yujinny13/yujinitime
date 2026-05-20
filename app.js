@@ -138,6 +138,34 @@ function loadState() {
   return deepClone(DEFAULT_STATE);
 }
 
+// ============= UNDO STACK =============
+const UNDO_MAX = 30;
+let undoStack = [];
+let isApplyingUndo = false;
+
+function pushUndo(label) {
+  if (isApplyingUndo) return;
+  try {
+    undoStack.push({ state: JSON.parse(JSON.stringify(state)), label: label || '편집', ts: Date.now() });
+    if (undoStack.length > UNDO_MAX) undoStack.shift();
+  } catch (e) {}
+}
+
+function undo() {
+  if (undoStack.length === 0) {
+    toast('되돌릴 게 없어');
+    return;
+  }
+  const prev = undoStack.pop();
+  isApplyingUndo = true;
+  state = Object.assign({}, deepClone(DEFAULT_STATE), prev.state);
+  state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+  saveState();
+  isApplyingUndo = false;
+  renderCurrentPage();
+  toast(`↶ <em>${prev.label}</em> 되돌림`);
+}
+
 let lastAutoBackupAt = 0;
 function pushAutoBackup(snapshot) {
   try {
@@ -414,6 +442,10 @@ function cloudSyncDebounced() {
   clearTimeout(cloudPushTimeout);
   cloudPushTimeout = setTimeout(pushToCloud, 1500);
 }
+function cloudSyncImmediate() {
+  clearTimeout(cloudPushTimeout);
+  return pushToCloud();
+}
 
 async function pushToCloud() {
   if (!supa || !currentSession) return;
@@ -524,11 +556,18 @@ function formatHM(ms) {
 }
 
 // ---------------- TOAST ----------------
-function toast(message, ms = 2200) {
+function toast(message, ms = 2200, opts = {}) {
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
   const t = el('div', 'toast');
   t.innerHTML = message;
+  if (opts.undoable) {
+    const btn = el('button', 'toast-undo');
+    btn.textContent = '↶ 실행 취소';
+    btn.addEventListener('click', () => { undo(); t.remove(); });
+    t.appendChild(btn);
+    ms = 5000; // 실행 취소 가능한 토스트는 좀 더 길게
+  }
   document.body.appendChild(t);
   setTimeout(() => t.remove(), ms);
 }
@@ -628,12 +667,13 @@ function saveDailyGoal() {
   const inp = $('#goal-input');
   if (!inp) return;
   const v = inp.value.trim();
+  pushUndo('목표 편집');
   if (!state.dailyGoals) state.dailyGoals = {};
   if (v) state.dailyGoals[today] = v;
   else delete state.dailyGoals[today];
   saveState();
   renderDailyGoal();
-  toast('<em>목표 저장</em>');
+  toast('<em>목표 저장</em>', 5000, { undoable: true });
 }
 
 function cancelDailyGoal() {
@@ -971,6 +1011,7 @@ function startTimer() {
 
 function stopTimer() {
   if (!state.timer.running) return;
+  pushUndo('타이머 종료 (시간표 자동 추가)');
   const elapsed = Date.now() - state.timer.startedAt;
   state.timer.accumulated += elapsed;
   state.timer.running = false;
@@ -982,7 +1023,7 @@ function stopTimer() {
   renderHourlyTable();
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = null;
-  toast(`<em>${formatHM(elapsed)}</em> 기록됨`);
+  toast(`<em>${formatHM(elapsed)}</em> 기록됨`, 5000, { undoable: true });
 }
 
 function attributeTimerToHourly(durationMs, category, label, colorHex) {
@@ -1214,6 +1255,7 @@ function eraseHourlySelection() {
   if (!hourlyActiveSelection) return;
   const n = countSelectedCells();
   if (!confirm(`선택한 ${n}칸 (${(n * 10)}분) 을 모두 지울까요?`)) return;
+  pushUndo(`${n}칸 지움`);
   const { startHour, startSlot, endHour, endSlot } = hourlyActiveSelection;
   const date = curDate();
   if (!state.timeBlocks[date]) state.timeBlocks[date] = [];
@@ -1243,7 +1285,7 @@ function eraseHourlySelection() {
   saveState();
   renderHourlyTable();
   clearHourlySelection();
-  toast(`<em>${n}칸 지움.</em>`);
+  toast(`<em>${n}칸 지움</em>`, 5000, { undoable: true });
 }
 function clearHourlySelection() {
   hourlyActiveSelection = null;
@@ -1252,9 +1294,16 @@ function clearHourlySelection() {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (!hourlyActiveSelection) return;
+  // ⌘/Ctrl + Z = 실행 취소 (어디서나 작동, 입력칸 제외)
   const ae = document.activeElement;
-  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.getAttribute('contenteditable') === 'true')) return;
+  const inInput = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.getAttribute('contenteditable') === 'true');
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !inInput) {
+    e.preventDefault();
+    undo();
+    return;
+  }
+  if (!hourlyActiveSelection) return;
+  if (inInput) return;
   if (document.querySelector('.modal-overlay:not([hidden])')) return;
   if (e.key === 'Backspace' || e.key === 'Delete') {
     e.preventDefault();
@@ -1380,6 +1429,7 @@ function saveHourlyCell() {
   if (presetActive) color = presetActive.dataset.color;
   else if (pastelSel) color = pastelSel.dataset.color;
   else { toast('자주 하는 일 또는 색을 골라줘.'); return; }
+  pushUndo('시간표 입력');
   const label = $('#modal-hourly-label').value.trim();
   const startStr = $('#modal-hourly-start').value || '00:00';
   const endStr = $('#modal-hourly-end').value || '00:00';
@@ -1418,10 +1468,12 @@ function saveHourlyCell() {
   renderHourlyTable();
   hourlyPickContext = null;
   clearHourlySelection();
+  toast(`<em>${label || '시간 블록'}</em> 저장됨`, 5000, { undoable: true });
 }
 
 function eraseHourlyCell() {
   if (!hourlyPickContext) return;
+  pushUndo('시간 블록 지움');
   const { startHour, startSlot, endHour, endSlot } = hourlyPickContext;
   const today = curDate();
   if (!state.timeBlocks[today]) state.timeBlocks[today] = [];
@@ -1437,6 +1489,7 @@ function eraseHourlyCell() {
   renderHourlyTable();
   hourlyPickContext = null;
   clearHourlySelection();
+  toast('<em>시간 블록 지움</em>', 5000, { undoable: true });
 }
 
 // =================================================================
@@ -1803,6 +1856,68 @@ function init() {
   initCloud().catch(e => console.warn('cloud init failed:', e));
   // 1분마다 동기 시각 업데이트
   setInterval(updateNavCloudUI, 60000);
+
+  // 탭 다시 켜면 클라우드에서 최신 받아옴 (다른 기기 변경사항 즉시 반영)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && cloudReady && currentSession && !skipCloud && cloudPullDone) {
+      pullFromCloud().then(() => renderCurrentPage());
+    }
+  });
+
+  // 탭/창 닫기 전 push 즉시 flush (debounce 무시)
+  window.addEventListener('beforeunload', () => {
+    if (cloudReady && currentSession && !skipCloud && cloudPullDone && cloudPushTimeout) {
+      clearTimeout(cloudPushTimeout);
+      // sendBeacon 같은 건 Supabase upsert에 적용 어려움 — 동기 fetch 시도
+      try {
+        navigator.sendBeacon && navigator.sendBeacon(
+          `${SUPABASE_URL}/rest/v1/${CLOUD_TABLE}`,
+          new Blob([JSON.stringify({ user_id: currentSession.user.id, state, updated_at: new Date().toISOString() })], { type: 'application/json' })
+        );
+      } catch(e) {}
+    }
+  });
+
+  // 30초마다 강제 풀 (다른 기기 변경 자동 반영)
+  setInterval(() => {
+    if (!document.hidden && cloudReady && currentSession && !skipCloud && cloudPullDone) {
+      pullFromCloudGently();
+    }
+  }, 30000);
+}
+
+function renderCurrentPage() {
+  const page = state.meta.currentPage || 'daily';
+  const r = pageRenderers[page];
+  if (r) r();
+}
+
+// 부드러운 pull — 클라우드가 더 새로우면 로컬 덮어쓰기, 아니면 무시
+async function pullFromCloudGently() {
+  if (!supa || !currentSession) return;
+  try {
+    const { data, error } = await supa
+      .from(CLOUD_TABLE)
+      .select('state, updated_at')
+      .eq('user_id', currentSession.user.id)
+      .maybeSingle();
+    if (error || !data || !data.state) return;
+    const cloudTs = new Date(data.updated_at).getTime();
+    // 우리 마지막 push/pull보다 최신이면 적용
+    if (lastSyncAt && cloudTs > lastSyncAt + 2000) {
+      state = Object.assign({}, deepClone(DEFAULT_STATE), data.state);
+      state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+      state.timeBlocks = state.timeBlocks || {};
+      state.dailyGoals = state.dailyGoals || {};
+      state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      lastSyncAt = Date.now();
+      setCloudStatus('synced', '방금 (다른 기기)');
+      updateNavCloudUI();
+      renderCurrentPage();
+      toast('☁ 다른 기기의 변경 사항 반영됨');
+    }
+  } catch(e) {}
 }
 
 document.addEventListener('DOMContentLoaded', init);
