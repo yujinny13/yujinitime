@@ -269,19 +269,25 @@ function updateNavCloudUI() {
   const loginBtn = document.getElementById('cloud-login-btn');
   const statusBtn = document.getElementById('cloud-status-btn');
   if (!loginBtn || !statusBtn) return;
-  // skip 모드 or 로그인 안 됨 → 로그인 버튼 보이기
-  if (skipCloud || (!currentSession && cloudReady)) {
-    loginBtn.removeAttribute('hidden');
-    statusBtn.setAttribute('hidden', '');
-  } else if (currentSession) {
+  // 항상 둘 중 하나는 무조건 보이게 — "왜 안 뜨지?" 사고 방지
+  if (currentSession) {
     loginBtn.setAttribute('hidden', '');
     statusBtn.removeAttribute('hidden');
-    // 마지막 동기 시각
-    const ts = lastSyncAt ? formatTimeAgo(lastSyncAt) : '대기';
+    const ts = lastSyncAt ? formatTimeAgo(lastSyncAt) : '확인 중';
     statusBtn.textContent = '☁ ' + ts;
   } else {
-    loginBtn.setAttribute('hidden', '');
+    loginBtn.removeAttribute('hidden');
     statusBtn.setAttribute('hidden', '');
+    // 상태별 텍스트 변경 (사용자가 한눈에 파악)
+    if (skipCloud) {
+      loginBtn.textContent = '☁ 동기 OFF';
+    } else if (!window.supabase) {
+      loginBtn.textContent = '⚠ 클라우드 차단';
+    } else if (!cloudReady) {
+      loginBtn.textContent = '☁ 연결 중...';
+    } else {
+      loginBtn.textContent = '☁ 로그인';
+    }
   }
 }
 
@@ -318,18 +324,55 @@ async function openCloudStatus() {
   actions.innerHTML = '';
   m.removeAttribute('hidden');
 
-  // 로그인 안 됨 처리
-  if (!supa || !currentSession) {
+  // 진단 정보 (왜 동기 안 되는지 자동 분석)
+  const diag = {
+    sdkLoaded: !!window.supabase,
+    skipCloud,
+    supaCreated: !!supa,
+    cloudReady,
+    hasSession: !!currentSession,
+    email: currentSession?.user?.email || null,
+    pullDone: cloudPullDone,
+    localDays: Object.keys(state.timeBlocks || {}).length,
+    localToday: (state.timeBlocks[todayStr()] || []).length
+  };
+
+  // 문제 상황 — 진단 화면 표시
+  if (!diag.sdkLoaded || diag.skipCloud || !diag.supaCreated || !diag.hasSession) {
+    let reason = '';
+    let fix = '';
+    if (!diag.sdkLoaded) {
+      reason = '⚠️ <strong>클라우드 SDK 차단됨</strong> — 광고 차단기(uBlock 등) 또는 회사 네트워크가 supabase.com 차단';
+      fix = `<button class="primary" onclick="location.reload();">새로고침 (광고 차단 끄고)</button>`;
+    } else if (diag.skipCloud) {
+      reason = '⚠️ <strong>"이 기기에서만" 모드</strong> — 이전에 동기 끄기 선택함';
+      fix = `<button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>`;
+    } else if (!diag.supaCreated) {
+      reason = '⚠️ <strong>Supabase 초기화 실패</strong> — 새로고침 필요';
+      fix = `<button class="primary" onclick="location.reload();">새로고침</button>`;
+    } else if (!diag.hasSession) {
+      reason = '⚠️ <strong>로그인 안 됨</strong> — 매직링크로 로그인해야 동기 시작';
+      fix = `<button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>`;
+    }
     body.innerHTML = `
-      <div class="cloud-warn">
-        ⚠️ <strong>로그인 안 됨</strong> — 클라우드 동기 안 됨.<br>
-        로그인하면 회사컴 ↔ 집컴 데이터 자동 동기.
-      </div>`;
+      <div class="cloud-warn">${reason}</div>
+      <div class="cloud-status-card">
+        <div class="csc-label">💻 진단 정보</div>
+        <div class="csc-row"><span class="k">SDK 로드</span><span class="v">${diag.sdkLoaded ? '✓' : '✗'}</span></div>
+        <div class="csc-row"><span class="k">동기 OFF 모드</span><span class="v">${diag.skipCloud ? '✗ ON' : '✓ OFF'}</span></div>
+        <div class="csc-row"><span class="k">supa 객체</span><span class="v">${diag.supaCreated ? '✓' : '✗'}</span></div>
+        <div class="csc-row"><span class="k">cloudReady</span><span class="v">${diag.cloudReady ? '✓' : '✗'}</span></div>
+        <div class="csc-row"><span class="k">로그인 세션</span><span class="v">${diag.hasSession ? '✓ ' + diag.email : '✗'}</span></div>
+        <div class="csc-row"><span class="k">로컬 시간표 일수</span><span class="v">${diag.localDays}</span></div>
+        <div class="csc-row"><span class="k">로컬 오늘 칸</span><span class="v">${diag.localToday}</span></div>
+      </div>
+    `;
     actions.innerHTML = `
       <div class="cloud-actions-grid">
-        <button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>
+        ${fix}
         <button onclick="closeAllModals();">닫기</button>
-      </div>`;
+      </div>
+    `;
     return;
   }
 
