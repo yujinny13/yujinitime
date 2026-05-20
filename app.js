@@ -215,7 +215,6 @@ function saveState() {
 
 // ============= SUPABASE AUTH + SYNC =============
 async function initCloud() {
-  // Nav UI 항상 업데이트
   updateNavCloudUI();
 
   if (!window.supabase) {
@@ -223,7 +222,6 @@ async function initCloud() {
     setCloudStatus('local', '로컬 모드');
     return;
   }
-  // "이 기기에서만" 골랐는지 확인 — skip이어도 supa는 만들어둠 (나중에 풀고 로그인 가능하게)
   const isSkipping = localStorage.getItem('yujinitime-skip-cloud') === '1';
   supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
@@ -239,20 +237,35 @@ async function initCloud() {
     return;
   }
 
-  const { data: { session } } = await supa.auth.getSession();
-  currentSession = session;
+  // getSession이 영원히 hang 방지 — 5초 timeout
+  try {
+    const sessionResult = await Promise.race([
+      supa.auth.getSession(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('getSession timeout')), 5000))
+    ]);
+    currentSession = sessionResult?.data?.session || null;
+  } catch (e) {
+    console.warn('getSession 실패:', e.message);
+    currentSession = null;
+  }
+  // ⚠️ 무조건 cloudReady = true (성공/실패 무관) — 영원히 "연결 중..." 표시 방지
   cloudReady = true;
+  updateNavCloudUI();
 
   supa.auth.onAuthStateChange(async (event, session) => {
     currentSession = session;
+    cloudReady = true; // SIGNED_IN 이후에도 보장 (이전 버그 fix)
     updateNavCloudUI();
     if (event === 'SIGNED_IN') {
       hideLogin();
+      cloudPullDone = false;
       await pullFromCloud();
-      renderDaily();
+      renderCurrentPage();
       toast('☁ 클라우드 동기 활성 — 어디서나 같은 데이터');
+      startRealtimeSync();
     } else if (event === 'SIGNED_OUT') {
       showLogin();
+      stopRealtimeSync();
     }
   });
 
@@ -260,9 +273,55 @@ async function initCloud() {
     showLogin();
   } else {
     await pullFromCloud();
-    renderDaily();
+    renderCurrentPage();
+    startRealtimeSync();
   }
   updateNavCloudUI();
+}
+
+// Realtime — 다른 기기 변경 즉시 (Supabase Realtime 활성화 시)
+let realtimeChannel = null;
+function startRealtimeSync() {
+  if (!supa || !currentSession) return;
+  stopRealtimeSync();
+  try {
+    realtimeChannel = supa
+      .channel(`yujinitime_${currentSession.user.id}`)
+      .on('postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: CLOUD_TABLE,
+          filter: `user_id=eq.${currentSession.user.id}`
+        },
+        (payload) => {
+          if (payload.new && payload.new.state) {
+            const cloudTs = new Date(payload.new.updated_at).getTime();
+            // 우리가 방금 push한 거면 무시
+            if (lastSyncAt && Math.abs(cloudTs - lastSyncAt) < 2000) return;
+            // 다른 기기 변경 → 자동 적용
+            state = Object.assign({}, deepClone(DEFAULT_STATE), payload.new.state);
+            state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
+            state.timeBlocks = state.timeBlocks || {};
+            state.dailyGoals = state.dailyGoals || {};
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+            lastSyncAt = Date.now();
+            setCloudStatus('synced', '실시간');
+            updateNavCloudUI();
+            renderCurrentPage();
+            toast('☁ 다른 기기 변경 실시간 반영');
+          }
+        })
+      .subscribe();
+  } catch(e) {
+    console.warn('Realtime 구독 실패:', e);
+  }
+}
+function stopRealtimeSync() {
+  if (realtimeChannel && supa) {
+    try { supa.removeChannel(realtimeChannel); } catch(e) {}
+    realtimeChannel = null;
+  }
 }
 
 function updateNavCloudUI() {
@@ -635,7 +694,8 @@ async function pullFromCloud() {
 let cloudPushTimeout = null;
 function cloudSyncDebounced() {
   clearTimeout(cloudPushTimeout);
-  cloudPushTimeout = setTimeout(pushToCloud, 1500);
+  // 빠른 동기 — 500ms로 단축
+  cloudPushTimeout = setTimeout(pushToCloud, 500);
 }
 function cloudSyncImmediate() {
   clearTimeout(cloudPushTimeout);
@@ -2092,12 +2152,12 @@ function init() {
     }
   });
 
-  // 30초마다 강제 풀 (다른 기기 변경 자동 반영)
+  // 5초마다 강제 풀 (Realtime 안 됐을 때 fallback — 거의 실시간)
   setInterval(() => {
     if (!document.hidden && cloudReady && currentSession && !skipCloud && cloudPullDone) {
       pullFromCloudGently();
     }
-  }, 30000);
+  }, 5000);
 }
 
 function renderCurrentPage() {
