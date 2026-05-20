@@ -119,25 +119,45 @@ function normalizeTimerPresets(presets) {
 }
 
 function loadState() {
-  // 새로고침 시 로컬 캐시 무시 — 항상 DEFAULT로 시작 (서버에서 pullFromCloud로 진짜 데이터 받아옴)
-  // 로컬은 오프라인 일시 fallback일 뿐, 진실의 원천 X
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const merged = Object.assign({}, deepClone(DEFAULT_STATE), parsed);
-      merged.timeBlocks = parsed.timeBlocks || {};
-      merged.dailyGoals = parsed.dailyGoals || {};
-      merged.timer = Object.assign({}, deepClone(DEFAULT_STATE.timer), parsed.timer || {});
-      merged.timerPresets = Object.assign({}, deepClone(DEFAULT_STATE.timerPresets), parsed.timerPresets || {});
-      merged.timerPresets = normalizeTimerPresets(merged.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
-      merged.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), parsed.meta || {});
-      return merged;
-    }
-  } catch (e) {
-    console.warn('Failed to load state:', e);
-  }
+  // ⚠️ localStorage 데이터 절대 안 봄 (사용자 요청 — 무조건 서버만)
+  // 페이지 열면 빈 상태 → 서버에서 pullFromCloud로 진짜 데이터 받아옴
+  // 기존 로컬 데이터는 한 번만 자동 import해서 서버에 올림 (마이그레이션)
   return deepClone(DEFAULT_STATE);
+}
+
+// 첫 한 번만 — 로컬에 남아있던 데이터를 서버로 올리기 (사용자 데이터 손실 방지)
+async function migrateLocalToServer() {
+  if (localStorage.getItem('yujinitime-migrated-v3') === '1') return;
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    localStorage.setItem('yujinitime-migrated-v3', '1');
+    return;
+  }
+  if (!supa || !currentSession) return; // 로그인 후 다시 시도
+  try {
+    const local = JSON.parse(raw);
+    // 서버 데이터 fetch
+    const { data: cloud } = await supa.from(CLOUD_TABLE).select('state').eq('user_id', currentSession.user.id).maybeSingle();
+    const cloudHasData = cloud?.state && (
+      Object.keys(cloud.state.timeBlocks || {}).length > 0 ||
+      Object.keys(cloud.state.dailyGoals || {}).length > 0
+    );
+    if (!cloudHasData && local) {
+      // 서버 비어있고 로컬에 데이터 있으면 → 서버로 올림
+      await supa.from(CLOUD_TABLE).upsert({
+        user_id: currentSession.user.id,
+        state: local,
+        updated_at: new Date().toISOString()
+      });
+      toast('☁ 옛 로컬 데이터를 서버로 이동했어');
+    }
+    // 마이그레이션 완료 표시 + 로컬 비우기
+    localStorage.setItem('yujinitime-migrated-v3', '1');
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(BACKUP_KEY);
+  } catch(e) {
+    console.warn('Migration failed:', e);
+  }
 }
 
 // ============= UNDO STACK =============
@@ -204,15 +224,15 @@ function restoreFromAutoBackup(ts) {
 }
 
 function saveState() {
-  try {
-    const snapshot = JSON.stringify(state);
-    localStorage.setItem(STORAGE_KEY, snapshot);
-    pushAutoBackup(JSON.parse(snapshot));
-  } catch (e) {
-    console.warn('Save failed:', e);
+  // ⚠️ localStorage 저장 안 함 (사용자 요청 — 무조건 서버만)
+  // pushAutoBackup도 안 함 (메모리 undo stack은 별도)
+  // 서버 push만 (debounce 500ms)
+  if (cloudReady && currentSession && !skipCloud && cloudPullDone) {
+    cloudSyncDebounced();
+  } else if (!currentSession) {
+    // 로그인 안 됐는데 편집했을 때 → 경고
+    showSyncErrorBanner('로그인 안 됨 — 변경 사항 저장 안 됨. 로그인 필요.');
   }
-  // 클라우드 pull 완료 전엔 절대 push 안 함 (race condition 방지)
-  if (cloudReady && currentSession && !skipCloud && cloudPullDone) cloudSyncDebounced();
 }
 
 // ============= SUPABASE AUTH + SYNC =============
@@ -230,7 +250,10 @@ async function initCloud() {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: 'yujinitime-auth'
+      // wealthy-life와 동일한 storageKey (Supabase 기본값)
+      // → wealthy-life에 로그인되어 있으면 yujinitime 자동 로그인됨
+      // → 매직링크/OTP 코드 받을 필요 X
+      storageKey: 'sb-mopeirfaxfojkrkswntf-auth-token'
     }
   });
   if (isSkipping) {
@@ -261,6 +284,7 @@ async function initCloud() {
     if (event === 'SIGNED_IN') {
       hideLogin();
       cloudPullDone = false;
+      await migrateLocalToServer();
       await pullFromCloud();
       renderCurrentPage();
       toast('☁ 클라우드 동기 활성 — 어디서나 같은 데이터');
@@ -274,6 +298,8 @@ async function initCloud() {
   if (!currentSession) {
     showLogin();
   } else {
+    // 첫 로그인 후 마이그레이션 (옛 로컬 데이터를 서버로)
+    await migrateLocalToServer();
     // 새로고침마다 무조건 서버에서 받아옴 (로컬 캐시 무시)
     await pullFromCloud();
     renderCurrentPage();
@@ -318,7 +344,7 @@ function startRealtimeSync() {
             state.timerPresets = normalizeTimerPresets(state.timerPresets) || deepClone(DEFAULT_STATE.timerPresets);
             state.timeBlocks = state.timeBlocks || {};
             state.dailyGoals = state.dailyGoals || {};
-            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+            // localStorage 저장 안 함 (사용자 요청 — 서버만)
             lastSyncAt = Date.now();
             setCloudStatus('synced', '실시간');
             updateNavCloudUI();
@@ -706,7 +732,7 @@ async function pullFromCloud() {
       state.timeBlocks = state.timeBlocks || {};
       state.dailyGoals = state.dailyGoals || {};
       state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      // localStorage 저장 안 함 (사용자 요청 — 서버만)
       lastSyncAt = Date.now();
       showSyncIndicator('synced', '동기 완료');
       setCloudStatus('synced', formatTimeAgo(lastSyncAt));
@@ -2235,7 +2261,7 @@ async function pullFromCloudGently() {
       state.timeBlocks = state.timeBlocks || {};
       state.dailyGoals = state.dailyGoals || {};
       state.meta = Object.assign({}, deepClone(DEFAULT_STATE.meta), state.meta || {});
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) {}
+      // localStorage 저장 안 함 (사용자 요청 — 서버만)
       lastSyncAt = Date.now();
       setCloudStatus('synced', '방금 (다른 기기)');
       updateNavCloudUI();
