@@ -1294,12 +1294,33 @@ function openHourlyModal(startHour, startSlot, endHour, endSlot) {
   const today = curDate();
   const blocks = state.timeBlocks[today] || [];
   const owning = blocks.find(b => b.hour === startHour && b.slot <= startSlot && (b.slot + b.span) > startSlot);
-  $('#modal-hourly-title').textContent = `${pad(startHour)}:${pad(startSlot * 10)} — ${pad(endHour)}:${pad((endSlot + 1) * 10 % 60)}${(endSlot+1>=6) ? ' (' + pad((endHour+1)%24) + ':00)' : ''}`;
-  $('#modal-hourly-start').value = `${pad(startHour)}:${pad(startSlot * 10)}`;
-  const endTotalMin = endHour * 60 + (endSlot + 1) * 10;
-  const endHr = Math.floor(endTotalMin / 60) % 24;
-  const endMn = endTotalMin % 60;
-  $('#modal-hourly-end').value = `${pad(endHr)}:${pad(endMn)}`;
+  // 기존 블록 클릭 → 그 블록의 진짜 시작/끝으로 시간 설정 (수정 시 원본 보존)
+  // 빈 칸 클릭/드래그 → 사용자가 고른 범위
+  let displayStartHour, displayStartMin, displayEndHour, displayEndMin;
+  if (owning) {
+    const realStartMin = owning.hour * 60 + owning.slot * 10;
+    const realEndMin = realStartMin + (owning.span || 1) * 10;
+    displayStartHour = Math.floor(realStartMin / 60) % 24;
+    displayStartMin = realStartMin % 60;
+    displayEndHour = Math.floor(realEndMin / 60) % 24;
+    displayEndMin = realEndMin % 60;
+    // hourlyPickContext도 진짜 범위로 업데이트 (저장/지우기 정확히)
+    hourlyPickContext = {
+      startHour: owning.hour,
+      startSlot: owning.slot,
+      endHour: Math.floor((realEndMin - 10) / 60) % 24,
+      endSlot: ((realEndMin - 10) % 60) / 10
+    };
+  } else {
+    displayStartHour = startHour;
+    displayStartMin = startSlot * 10;
+    const endTotalMin = endHour * 60 + (endSlot + 1) * 10;
+    displayEndHour = Math.floor(endTotalMin / 60) % 24;
+    displayEndMin = endTotalMin % 60;
+  }
+  $('#modal-hourly-title').textContent = `${pad(displayStartHour)}:${pad(displayStartMin)} — ${pad(displayEndHour)}:${pad(displayEndMin)}`;
+  $('#modal-hourly-start').value = `${pad(displayStartHour)}:${pad(displayStartMin)}`;
+  $('#modal-hourly-end').value = `${pad(displayEndHour)}:${pad(displayEndMin)}`;
   $('#modal-hourly-label').value = owning ? (owning.label || '') : '';
 
   const presetRow = $('#modal-hourly-presets');
