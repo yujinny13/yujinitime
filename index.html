@@ -19,7 +19,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sofia+Sans:wght@400;450;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css" />
-<link rel="stylesheet" href="styles.css?v=1.4.0">
+<link rel="stylesheet" href="styles.css?v=1.5.0">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -29,15 +29,19 @@
   <div class="login-card">
     <div class="login-brand">Y U J I N I<span class="sep">·</span>T I M E</div>
     <div class="login-title">회사컴 ↔ 집컴 동기</div>
-    <div class="login-sub">너 이메일로 로그인 링크를 보내. 비밀번호 없음, 매직링크.</div>
+    <div class="login-sub">이메일로 <strong>6자리 코드</strong>를 보내. 메일에서 코드 받아 입력만 하면 끝.</div>
     <form id="login-form" onsubmit="return false">
       <input type="email" id="login-email" placeholder="yujinny13@gmail.com" required autocomplete="email" />
-      <button id="login-btn" type="submit">매직 링크 받기 →</button>
+      <button id="login-btn" type="submit">코드 받기 →</button>
     </form>
+    <div id="otp-section" hidden style="margin-top:14px;">
+      <input type="text" id="otp-code" placeholder="6자리 코드 입력" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" />
+      <button id="otp-verify-btn" type="button">로그인 →</button>
+    </div>
     <div class="login-status" id="login-status"></div>
     <div class="login-foot">
-      🔒 본인 이메일만 등록됨. 데이터는 본인 user_id에 묶임.<br>
-      로그인 안 하고 쓸 수도 있음 — <span data-action="skip-login" style="text-decoration:underline; cursor:pointer; color:var(--signal)">이 기기에서만</span>
+      🔒 본인 이메일만 등록됨. 데이터는 클라우드(Supabase)에 저장.<br>
+      로그인 안 하면 사이트 사용 못 함 — 어디서나 같은 데이터 보려면 필수.
     </div>
   </div>
 </div>

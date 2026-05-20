@@ -119,6 +119,8 @@ function normalizeTimerPresets(presets) {
 }
 
 function loadState() {
+  // 새로고침 시 로컬 캐시 무시 — 항상 DEFAULT로 시작 (서버에서 pullFromCloud로 진짜 데이터 받아옴)
+  // 로컬은 오프라인 일시 fallback일 뿐, 진실의 원천 X
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -272,11 +274,23 @@ async function initCloud() {
   if (!currentSession) {
     showLogin();
   } else {
+    // 새로고침마다 무조건 서버에서 받아옴 (로컬 캐시 무시)
     await pullFromCloud();
     renderCurrentPage();
     startRealtimeSync();
   }
   updateNavCloudUI();
+}
+
+// skip 모드 안내 + 로그인 강제 (사용자 요청)
+function skipCloudSync() {
+  toast('⚠️ 로그인 안 하면 다른 기기에서 못 봐. 그래도 로컬에서만 쓸래?');
+  if (confirm('로그인 없이 쓰면 회사컴/모바일에서 데이터 못 봐. 그래도 OK?')) {
+    localStorage.setItem('yujinitime-skip-cloud', '1');
+    skipCloud = true;
+    hideLogin();
+    updateNavCloudUI();
+  }
 }
 
 // Realtime — 다른 기기 변경 즉시 (Supabase Realtime 활성화 시)
@@ -596,7 +610,7 @@ function hideLogin() {
   if (ov) ov.setAttribute('hidden', '');
 }
 
-async function sendMagicLink() {
+async function sendOtpCode() {
   const email = document.getElementById('login-email').value.trim();
   const status = document.getElementById('login-status');
   const btn = document.getElementById('login-btn');
@@ -610,32 +624,54 @@ async function sendMagicLink() {
   try {
     const { error } = await supa.auth.signInWithOtp({
       email,
-      options: {
-        emailRedirectTo: window.location.origin,
-        shouldCreateUser: true
-      }
+      options: { shouldCreateUser: true }
     });
     if (error) {
       status.className = 'login-status error';
       status.textContent = `오류: ${error.message}`;
-      btn.disabled = false; btn.textContent = '매직 링크 받기 →';
+      btn.disabled = false; btn.textContent = '코드 받기 →';
     } else {
-      status.innerHTML = `📬 <em>${email}</em>로 매직 링크 보냈어.<br>메일함 (스팸함도) 확인하고 링크 클릭.`;
+      status.innerHTML = `📬 <em>${email}</em>로 <strong>6자리 코드</strong> 보냈어.<br>메일함 (스팸함도) 확인하고 입력해.`;
       btn.disabled = false; btn.textContent = '다시 보내기';
+      // OTP 입력 칸 보이기
+      document.getElementById('otp-section').removeAttribute('hidden');
+      setTimeout(() => document.getElementById('otp-code').focus(), 100);
     }
   } catch (e) {
     status.className = 'login-status error';
     status.textContent = `네트워크 오류: ${e.message}`;
-    btn.disabled = false; btn.textContent = '매직 링크 받기 →';
+    btn.disabled = false; btn.textContent = '코드 받기 →';
   }
 }
 
-function skipCloudSync() {
-  if (!confirm('로그인 없이 이 기기에서만 쓸까? 회사컴 ↔ 집컴 동기 안 됨.')) return;
-  localStorage.setItem('yujinitime-skip-cloud', '1');
-  skipCloud = true;
-  hideLogin();
+async function verifyOtp() {
+  const email = document.getElementById('login-email').value.trim();
+  const token = document.getElementById('otp-code').value.trim();
+  const status = document.getElementById('login-status');
+  const btn = document.getElementById('otp-verify-btn');
+  if (!email || !token) {
+    status.textContent = '이메일과 코드 모두 입력해줘.';
+    status.className = 'login-status error';
+    return;
+  }
+  btn.disabled = true; btn.textContent = '확인 중...';
+  status.className = 'login-status'; status.textContent = '';
+  try {
+    const { data, error } = await supa.auth.verifyOtp({
+      email, token, type: 'email'
+    });
+    if (error) throw error;
+    status.textContent = '✓ 로그인 완료';
+    // SIGNED_IN 이벤트가 onAuthStateChange에서 처리 → pullFromCloud → 화면 갱신
+  } catch (e) {
+    status.className = 'login-status error';
+    status.textContent = `코드가 틀리거나 만료됨: ${e.message}`;
+    btn.disabled = false; btn.textContent = '로그인 →';
+  }
 }
+
+// 호환성을 위해 기존 이름도 매핑
+const sendMagicLink = sendOtpCode;
 
 // 편집 잠금 — 클라우드 pull 완료 전 push 막기
 let cloudPullDone = false;
@@ -2093,9 +2129,24 @@ function setupEventDelegation() {
     }
   });
 
-  // 로그인 폼
+  // 로그인 폼 (이메일 → 코드 받기)
   const lf = document.getElementById('login-form');
-  if (lf) lf.addEventListener('submit', e => { e.preventDefault(); sendMagicLink(); });
+  if (lf) lf.addEventListener('submit', e => { e.preventDefault(); sendOtpCode(); });
+  // OTP 코드 verify
+  const otpBtn = document.getElementById('otp-verify-btn');
+  if (otpBtn) otpBtn.addEventListener('click', () => verifyOtp());
+  const otpInput = document.getElementById('otp-code');
+  if (otpInput) {
+    otpInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); verifyOtp(); }
+    });
+    // 6자리 다 입력하면 자동 verify
+    otpInput.addEventListener('input', e => {
+      const v = e.target.value.replace(/[^0-9]/g, '');
+      e.target.value = v;
+      if (v.length === 6) verifyOtp();
+    });
+  }
 }
 
 // =================================================================
