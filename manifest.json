@@ -1,0 +1,18 @@
+{
+  "name": "유진이타임",
+  "short_name": "유진이타임",
+  "description": "타이머 + 시간표 — 회사컴 ↔ 집컴 자동 동기",
+  "start_url": "/#daily",
+  "display": "standalone",
+  "background_color": "#F3F0EE",
+  "theme_color": "#F3F0EE",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23F3F0EE' rx='22'/><circle cx='50' cy='55' r='32' fill='%23FFFFFF' stroke='%231F1B16' stroke-width='4'/><line x1='50' y1='55' x2='50' y2='33' stroke='%231F1B16' stroke-width='4' stroke-linecap='round'/><line x1='50' y1='55' x2='66' y2='55' stroke='%23CF4500' stroke-width='3' stroke-linecap='round'/><circle cx='50' cy='55' r='2.8' fill='%231F1B16'/></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
