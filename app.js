@@ -1093,6 +1093,9 @@ function isMobile() { return window.innerWidth <= 768; }
 function renderHourlyTable() {
   const grid = $('#tt-grid');
   if (!grid) return;
+  // 이전 선택 상태 강제 클리어 (드래그가 중간에 끊겼을 때 selected 잔존 방지)
+  hourlyActiveSelection = null;
+  hideHourlyActionBar();
   grid.innerHTML = '';
   grid.appendChild(el('div', 'hh', ''));
   ['00','10','20','30','40','50'].forEach(t => grid.appendChild(el('div', 'ch', ':' + t)));
@@ -1217,6 +1220,17 @@ function setupHourlyDragSelect() {
       }
     }
   });
+  // 안전망: 마우스가 시간표 밖으로 나가서 mouseup 됐을 때도 끝내기
+  document.addEventListener('mouseup', () => {
+    if (dragging) {
+      if (didMove && dragStart && lastEnd) {
+        finishDrag();
+      } else {
+        dragging = false;
+        clearPreview();
+      }
+    }
+  }, { once: true });
 }
 
 function showHourlyActionBar() {
@@ -1439,7 +1453,8 @@ function saveHourlyCell() {
   let endMin = eh * 60 + em;
   startMin = Math.floor(startMin / 10) * 10;
   endMin = Math.ceil(endMin / 10) * 10;
-  if (endMin <= startMin) endMin = startMin + 10;
+  // 끝이 시작보다 작거나 같으면 자정 넘어가는 것으로 간주 (다음날까지)
+  if (endMin <= startMin) endMin += 24 * 60;
   const totalSlots = (endMin - startMin) / 10;
   const startHour = Math.floor(startMin / 60);
   const startSlot = (startMin % 60) / 10;
