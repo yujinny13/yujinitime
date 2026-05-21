@@ -650,16 +650,18 @@ async function sendOtpCode() {
   try {
     const { error } = await supa.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true }
+      options: {
+        emailRedirectTo: window.location.origin + '/#daily',
+        shouldCreateUser: true
+      }
     });
     if (error) {
       status.className = 'login-status error';
       status.textContent = `오류: ${error.message}`;
       btn.disabled = false; btn.textContent = '코드 받기 →';
     } else {
-      status.innerHTML = `📬 <em>${email}</em>로 <strong>6자리 코드</strong> 보냈어.<br>메일함 (스팸함도) 확인하고 입력해.`;
+      status.innerHTML = `📬 <em>${email}</em>로 메일 보냈어.<br><strong>"Log In" 링크 클릭하면 여기로 자동 로그인.</strong><br>(또는 메일에 6자리 코드 있으면 입력해도 됨)`;
       btn.disabled = false; btn.textContent = '다시 보내기';
-      // OTP 입력 칸 보이기
       document.getElementById('otp-section').removeAttribute('hidden');
       setTimeout(() => document.getElementById('otp-code').focus(), 100);
     }
