@@ -10,13 +10,15 @@ const BACKUP_MAX = 24; // rolling 24개 (약 6시간치 — 15분마다 1개)
 const VERSION = 1;
 
 // ============= SUPABASE CONFIG =============
-// 공개 키 — RLS로 보호되니 노출 OK
 const SUPABASE_URL = 'https://mopeirfaxfojkrkswntf.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_JzBgsQJr6ZvOtFzZP3YZqA_1FzGXAHW';
-const CLOUD_TABLE = 'yujinitime_state';
+const CLOUD_TABLE = 'yujinitime_sync';  // 새 테이블 (인증 X, sync_code 기반)
+const SYNC_CODE_KEY = 'yujinitime-sync-code';
 let supa = null;
-let currentSession = null;
 let cloudReady = false;
+let syncCode = null;
+// 호환성 (이전 인증 코드 안 깨지게)
+let currentSession = null;
 let skipCloud = false;
 
 let viewedDate = null;
@@ -127,32 +129,27 @@ function loadState() {
 
 // 첫 한 번만 — 로컬에 남아있던 데이터를 서버로 올리기 (사용자 데이터 손실 방지)
 async function migrateLocalToServer() {
-  if (localStorage.getItem('yujinitime-migrated-v3') === '1') return;
+  if (!supa || !syncCode) return;
+  if (localStorage.getItem('yujinitime-migrated-v4') === '1') return;
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    localStorage.setItem('yujinitime-migrated-v3', '1');
-    return;
-  }
-  if (!supa || !currentSession) return; // 로그인 후 다시 시도
   try {
-    const local = JSON.parse(raw);
-    // 서버 데이터 fetch
-    const { data: cloud } = await supa.from(CLOUD_TABLE).select('state').eq('user_id', currentSession.user.id).maybeSingle();
-    const cloudHasData = cloud?.state && (
-      Object.keys(cloud.state.timeBlocks || {}).length > 0 ||
-      Object.keys(cloud.state.dailyGoals || {}).length > 0
-    );
-    if (!cloudHasData && local) {
-      // 서버 비어있고 로컬에 데이터 있으면 → 서버로 올림
-      await supa.from(CLOUD_TABLE).upsert({
-        user_id: currentSession.user.id,
-        state: local,
-        updated_at: new Date().toISOString()
-      });
-      toast('☁ 옛 로컬 데이터를 서버로 이동했어');
+    if (raw) {
+      const local = JSON.parse(raw);
+      const { data: cloud } = await supa.from(CLOUD_TABLE).select('state').eq('code', syncCode).maybeSingle();
+      const cloudHasData = cloud?.state && (
+        Object.keys(cloud.state.timeBlocks || {}).length > 0 ||
+        Object.keys(cloud.state.dailyGoals || {}).length > 0
+      );
+      if (!cloudHasData && local) {
+        await supa.from(CLOUD_TABLE).upsert({
+          code: syncCode,
+          state: local,
+          updated_at: new Date().toISOString()
+        });
+        toast('☁ 옛 로컬 데이터를 서버로 옮겼어');
+      }
     }
-    // 마이그레이션 완료 표시 + 로컬 비우기
-    localStorage.setItem('yujinitime-migrated-v3', '1');
+    localStorage.setItem('yujinitime-migrated-v4', '1');
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(BACKUP_KEY);
   } catch(e) {
@@ -224,14 +221,11 @@ function restoreFromAutoBackup(ts) {
 }
 
 function saveState() {
-  // ⚠️ localStorage 저장 안 함 (사용자 요청 — 무조건 서버만)
-  // pushAutoBackup도 안 함 (메모리 undo stack은 별도)
-  // 서버 push만 (debounce 500ms)
-  if (cloudReady && currentSession && !skipCloud && cloudPullDone) {
+  // localStorage 저장 안 함 (사용자 요청 — 무조건 서버만)
+  if (cloudReady && syncCode && cloudPullDone) {
     cloudSyncDebounced();
-  } else if (!currentSession) {
-    // 로그인 안 됐는데 편집했을 때 → 경고
-    showSyncErrorBanner('로그인 안 됨 — 변경 사항 저장 안 됨. 로그인 필요.');
+  } else if (!syncCode) {
+    showSyncErrorBanner('동기 코드 미설정 — 변경 사항 저장 안 됨');
   }
 }
 
@@ -240,71 +234,71 @@ async function initCloud() {
   updateNavCloudUI();
 
   if (!window.supabase) {
-    console.warn('Supabase SDK 미로드 — 오프라인 모드');
-    setCloudStatus('local', '로컬 모드');
+    setCloudStatus('local', '오프라인');
     return;
   }
-  const isSkipping = localStorage.getItem('yujinitime-skip-cloud') === '1';
   supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
-      // wealthy-life와 동일한 storageKey (Supabase 기본값)
-      // → wealthy-life에 로그인되어 있으면 yujinitime 자동 로그인됨
-      // → 매직링크/OTP 코드 받을 필요 X
-      storageKey: 'sb-mopeirfaxfojkrkswntf-auth-token'
-    }
+    auth: { persistSession: false }
   });
-  if (isSkipping) {
-    skipCloud = true;
-    updateNavCloudUI();
+  cloudReady = true;
+
+  // 저장된 sync code 있으면 사용
+  syncCode = localStorage.getItem(SYNC_CODE_KEY);
+  if (!syncCode) {
+    showLogin();
     return;
   }
-
-  // getSession이 영원히 hang 방지 — 5초 timeout
-  try {
-    const sessionResult = await Promise.race([
-      supa.auth.getSession(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('getSession timeout')), 5000))
-    ]);
-    currentSession = sessionResult?.data?.session || null;
-  } catch (e) {
-    console.warn('getSession 실패:', e.message);
-    currentSession = null;
-  }
-  // ⚠️ 무조건 cloudReady = true (성공/실패 무관) — 영원히 "연결 중..." 표시 방지
-  cloudReady = true;
+  // 마이그레이션 + pull
+  await migrateLocalToServer();
+  await pullFromCloud();
+  renderCurrentPage();
+  startRealtimeSync();
   updateNavCloudUI();
+}
 
-  supa.auth.onAuthStateChange(async (event, session) => {
-    currentSession = session;
-    cloudReady = true; // SIGNED_IN 이후에도 보장 (이전 버그 fix)
-    updateNavCloudUI();
-    if (event === 'SIGNED_IN') {
-      hideLogin();
-      cloudPullDone = false;
-      await migrateLocalToServer();
-      await pullFromCloud();
-      renderCurrentPage();
-      toast('☁ 클라우드 동기 활성 — 어디서나 같은 데이터');
-      startRealtimeSync();
-    } else if (event === 'SIGNED_OUT') {
-      showLogin();
-      stopRealtimeSync();
-    }
-  });
-
-  if (!currentSession) {
-    showLogin();
-  } else {
-    // 첫 로그인 후 마이그레이션 (옛 로컬 데이터를 서버로)
+// 사용자가 동기 코드 입력
+async function applySyncCode() {
+  const inp = document.getElementById('sync-code-input');
+  const status = document.getElementById('login-status');
+  if (!inp) return;
+  const code = inp.value.trim();
+  if (!code) {
+    status.textContent = '코드를 입력해줘.';
+    status.className = 'login-status error';
+    return;
+  }
+  if (code.length < 4) {
+    status.textContent = '코드는 4자 이상 (다른 사람이 못 맞추게)';
+    status.className = 'login-status error';
+    return;
+  }
+  syncCode = code;
+  localStorage.setItem(SYNC_CODE_KEY, code);
+  status.textContent = '☁ 클라우드 연결 중...';
+  status.className = 'login-status';
+  try {
+    cloudPullDone = false;
     await migrateLocalToServer();
-    // 새로고침마다 무조건 서버에서 받아옴 (로컬 캐시 무시)
     await pullFromCloud();
+    hideLogin();
     renderCurrentPage();
     startRealtimeSync();
+    updateNavCloudUI();
+    toast('☁ 연결됨 — 다른 기기에도 같은 코드 입력하면 자동 동기');
+  } catch(e) {
+    status.className = 'login-status error';
+    status.textContent = '실패: ' + e.message;
   }
+}
+
+function logoutSyncCode() {
+  if (!confirm('동기 코드 로그아웃? (데이터는 클라우드에 그대로 — 다시 같은 코드 입력하면 복원)')) return;
+  localStorage.removeItem(SYNC_CODE_KEY);
+  syncCode = null;
+  state = deepClone(DEFAULT_STATE);
+  stopRealtimeSync();
+  showLogin();
+  renderCurrentPage();
   updateNavCloudUI();
 }
 
@@ -322,17 +316,17 @@ function skipCloudSync() {
 // Realtime — 다른 기기 변경 즉시 (Supabase Realtime 활성화 시)
 let realtimeChannel = null;
 function startRealtimeSync() {
-  if (!supa || !currentSession) return;
+  if (!supa || !syncCode) return;
   stopRealtimeSync();
   try {
     realtimeChannel = supa
-      .channel(`yujinitime_${currentSession.user.id}`)
+      .channel(`yujinitime_${syncCode}`)
       .on('postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: CLOUD_TABLE,
-          filter: `user_id=eq.${currentSession.user.id}`
+          filter: `code=eq.${syncCode}`
         },
         (payload) => {
           if (payload.new && payload.new.state) {
@@ -368,8 +362,7 @@ function updateNavCloudUI() {
   const loginBtn = document.getElementById('cloud-login-btn');
   const statusBtn = document.getElementById('cloud-status-btn');
   if (!loginBtn || !statusBtn) return;
-  // 항상 둘 중 하나는 무조건 보이게 — "왜 안 뜨지?" 사고 방지
-  if (currentSession) {
+  if (syncCode) {
     loginBtn.setAttribute('hidden', '');
     statusBtn.removeAttribute('hidden');
     const ts = lastSyncAt ? formatTimeAgo(lastSyncAt) : '확인 중';
@@ -377,15 +370,10 @@ function updateNavCloudUI() {
   } else {
     loginBtn.removeAttribute('hidden');
     statusBtn.setAttribute('hidden', '');
-    // 상태별 텍스트 변경 (사용자가 한눈에 파악)
-    if (skipCloud) {
-      loginBtn.textContent = '☁ 동기 OFF';
-    } else if (!window.supabase) {
+    if (!window.supabase) {
       loginBtn.textContent = '⚠ 클라우드 차단';
-    } else if (!cloudReady) {
-      loginBtn.textContent = '☁ 연결 중...';
     } else {
-      loginBtn.textContent = '☁ 로그인';
+      loginBtn.textContent = '☁ 코드 입력';
     }
   }
 }
@@ -423,45 +411,37 @@ async function openCloudStatus() {
   actions.innerHTML = '';
   m.removeAttribute('hidden');
 
-  // 진단 정보 (왜 동기 안 되는지 자동 분석)
   const diag = {
     sdkLoaded: !!window.supabase,
-    skipCloud,
     supaCreated: !!supa,
     cloudReady,
-    hasSession: !!currentSession,
-    email: currentSession?.user?.email || null,
+    syncCode: syncCode || null,
     pullDone: cloudPullDone,
     localDays: Object.keys(state.timeBlocks || {}).length,
     localToday: (state.timeBlocks[todayStr()] || []).length
   };
 
-  // 문제 상황 — 진단 화면 표시
-  if (!diag.sdkLoaded || diag.skipCloud || !diag.supaCreated || !diag.hasSession) {
+  if (!diag.sdkLoaded || !diag.supaCreated || !diag.syncCode) {
     let reason = '';
     let fix = '';
     if (!diag.sdkLoaded) {
-      reason = '⚠️ <strong>클라우드 SDK 차단됨</strong> — 광고 차단기(uBlock 등) 또는 회사 네트워크가 supabase.com 차단';
-      fix = `<button class="primary" onclick="location.reload();">새로고침 (광고 차단 끄고)</button>`;
-    } else if (diag.skipCloud) {
-      reason = '⚠️ <strong>"이 기기에서만" 모드</strong> — 이전에 동기 끄기 선택함';
-      fix = `<button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>`;
-    } else if (!diag.supaCreated) {
-      reason = '⚠️ <strong>Supabase 초기화 실패</strong> — 새로고침 필요';
+      reason = '⚠️ <strong>클라우드 SDK 차단됨</strong> — 광고 차단기 또는 회사 네트워크가 막음';
       fix = `<button class="primary" onclick="location.reload();">새로고침</button>`;
-    } else if (!diag.hasSession) {
-      reason = '⚠️ <strong>로그인 안 됨</strong> — 매직링크로 로그인해야 동기 시작';
-      fix = `<button class="primary" onclick="closeAllModals(); openCloudLogin();">로그인하기</button>`;
+    } else if (!diag.supaCreated) {
+      reason = '⚠️ <strong>Supabase 초기화 실패</strong>';
+      fix = `<button class="primary" onclick="location.reload();">새로고침</button>`;
+    } else if (!diag.syncCode) {
+      reason = '⚠️ <strong>동기 코드 미입력</strong> — 코드 입력해야 동기 시작';
+      fix = `<button class="primary" onclick="closeAllModals(); openCloudLogin();">코드 입력하기</button>`;
     }
     body.innerHTML = `
       <div class="cloud-warn">${reason}</div>
       <div class="cloud-status-card">
         <div class="csc-label">💻 진단 정보</div>
         <div class="csc-row"><span class="k">SDK 로드</span><span class="v">${diag.sdkLoaded ? '✓' : '✗'}</span></div>
-        <div class="csc-row"><span class="k">동기 OFF 모드</span><span class="v">${diag.skipCloud ? '✗ ON' : '✓ OFF'}</span></div>
         <div class="csc-row"><span class="k">supa 객체</span><span class="v">${diag.supaCreated ? '✓' : '✗'}</span></div>
         <div class="csc-row"><span class="k">cloudReady</span><span class="v">${diag.cloudReady ? '✓' : '✗'}</span></div>
-        <div class="csc-row"><span class="k">로그인 세션</span><span class="v">${diag.hasSession ? '✓ ' + diag.email : '✗'}</span></div>
+        <div class="csc-row"><span class="k">동기 코드</span><span class="v">${diag.syncCode || '✗'}</span></div>
         <div class="csc-row"><span class="k">로컬 시간표 일수</span><span class="v">${diag.localDays}</span></div>
         <div class="csc-row"><span class="k">로컬 오늘 칸</span><span class="v">${diag.localToday}</span></div>
       </div>
@@ -481,7 +461,7 @@ async function openCloudStatus() {
     const { data, error } = await supa
       .from(CLOUD_TABLE)
       .select('state, updated_at')
-      .eq('user_id', currentSession.user.id)
+      .eq('code', syncCode)
       .maybeSingle();
     if (error) cloudError = error.message;
     else cloudData = data;
@@ -524,7 +504,7 @@ async function openCloudStatus() {
         <div class="csc-row"><span class="k">시간표 일수</span><span class="v">${localDays}</span></div>
         <div class="csc-row"><span class="k">오늘 채워진 칸</span><span class="v">${localToday}</span></div>
         <div class="csc-row"><span class="k">목표 적은 일수</span><span class="v">${localGoals}</span></div>
-        <div class="csc-time">${currentSession.user.email}</div>
+        <div class="csc-time">코드: ${escapeHtml(syncCode || '')}</div>
       </div>
     </div>
   `;
@@ -542,7 +522,7 @@ async function openCloudStatus() {
 }
 
 async function forcePullFromCloud() {
-  if (!supa || !currentSession) return;
+  if (!supa || !syncCode) return;
   closeAllModals();
   hideSyncErrorBanner();
   showSyncIndicator('syncing', '클라우드에서 받아오는 중...');
@@ -550,7 +530,7 @@ async function forcePullFromCloud() {
     const { data, error } = await supa
       .from(CLOUD_TABLE)
       .select('state, updated_at')
-      .eq('user_id', currentSession.user.id)
+      .eq('code', syncCode)
       .maybeSingle();
     if (error) throw error;
     if (!data?.state) {
@@ -578,7 +558,7 @@ async function forcePullFromCloud() {
 }
 
 async function forcePushToCloud() {
-  if (!supa || !currentSession) return;
+  if (!supa || !syncCode) return;
   closeAllModals();
   hideSyncErrorBanner();
   showSyncIndicator('syncing', '클라우드에 올리는 중...');
@@ -586,7 +566,7 @@ async function forcePushToCloud() {
     const { error } = await supa
       .from(CLOUD_TABLE)
       .upsert({
-        user_id: currentSession.user.id,
+        code: syncCode,
         state: state,
         updated_at: new Date().toISOString()
       });
@@ -615,15 +595,8 @@ function hideSyncErrorBanner() {
 }
 
 function openCloudLogin() {
-  // skip 모드 해제하고 로그인 화면 보여주기
-  localStorage.removeItem('yujinitime-skip-cloud');
-  skipCloud = false;
-  if (!supa) {
-    // Supabase 초기화 안 됐으면 페이지 리로드
-    location.reload();
-    return;
-  }
-  cloudReady = true;
+  // 동기 코드 다시 입력 화면
+  if (!supa) { location.reload(); return; }
   showLogin();
 }
 
@@ -748,7 +721,7 @@ async function loginWithUrl() {
 let cloudPullDone = false;
 
 async function pullFromCloud() {
-  if (!supa || !currentSession) return;
+  if (!supa || !syncCode) return;
   cloudPullDone = false;
   showSyncIndicator('syncing', '동기 중...');
   setCloudStatus('syncing', '동기 중');
@@ -756,15 +729,14 @@ async function pullFromCloud() {
     const { data, error } = await supa
       .from(CLOUD_TABLE)
       .select('state, updated_at')
-      .eq('user_id', currentSession.user.id)
+      .eq('code', syncCode)
       .maybeSingle();
     if (error) {
       if (String(error.message).toLowerCase().includes('does not exist') ||
           String(error.code) === '42P01' ||
           String(error.message).toLowerCase().includes('schema cache')) {
-        showSyncIndicator('error', '⚠ 테이블 없음 — Supabase에서 SQL 실행 필요');
+        showSyncErrorBanner('⚠ 테이블 없음 — Supabase SQL 실행 필요 (안내 봐)');
         setCloudStatus('error', '테이블 없음');
-        setTimeout(hideSyncIndicator, 6000);
         return;
       }
       throw error;
@@ -810,10 +782,9 @@ function cloudSyncImmediate() {
 }
 
 async function pushToCloud() {
-  if (!supa || !currentSession) return;
-  // pull 안 끝났으면 push 안 함 (race 방지)
+  if (!supa || !syncCode) return;
   if (!cloudPullDone) {
-    console.warn('Push 보류 — 클라우드 pull 미완료');
+    console.warn('Push 보류 — pull 미완료');
     return;
   }
   showSyncIndicator('syncing', '저장 중...');
@@ -822,7 +793,7 @@ async function pushToCloud() {
     const { error } = await supa
       .from(CLOUD_TABLE)
       .upsert({
-        user_id: currentSession.user.id,
+        code: syncCode,
         state: state,
         updated_at: new Date().toISOString()
       });
@@ -852,9 +823,7 @@ function hideSyncIndicator() {
 }
 
 async function cloudLogout() {
-  if (!supa) return;
-  await supa.auth.signOut();
-  toast('로그아웃 — 매직링크로 다시 들어와');
+  logoutSyncCode();
 }
 
 let state = loadState();
@@ -2200,31 +2169,9 @@ function setupEventDelegation() {
     }
   });
 
-  // 로그인 폼 (이메일 → 코드 받기)
+  // 동기 코드 입력 폼
   const lf = document.getElementById('login-form');
-  if (lf) lf.addEventListener('submit', e => { e.preventDefault(); sendOtpCode(); });
-  // OTP 코드 verify
-  const otpBtn = document.getElementById('otp-verify-btn');
-  if (otpBtn) otpBtn.addEventListener('click', () => verifyOtp());
-  // URL 직접 붙여넣기 로그인
-  const urlBtn = document.getElementById('login-url-btn');
-  if (urlBtn) urlBtn.addEventListener('click', () => loginWithUrl());
-  const urlInput = document.getElementById('login-url');
-  if (urlInput) urlInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); loginWithUrl(); }
-  });
-  const otpInput = document.getElementById('otp-code');
-  if (otpInput) {
-    otpInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); verifyOtp(); }
-    });
-    // 6자리 다 입력하면 자동 verify
-    otpInput.addEventListener('input', e => {
-      const v = e.target.value.replace(/[^0-9]/g, '');
-      e.target.value = v;
-      if (v.length === 6) verifyOtp();
-    });
-  }
+  if (lf) lf.addEventListener('submit', e => { e.preventDefault(); applySyncCode(); });
 }
 
 // =================================================================
@@ -2262,20 +2209,20 @@ function init() {
 
   // 탭 다시 켜면 클라우드에서 최신 받아옴 (다른 기기 변경사항 즉시 반영)
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && cloudReady && currentSession && !skipCloud && cloudPullDone) {
+    if (!document.hidden && cloudReady && syncCode && cloudPullDone) {
       pullFromCloud().then(() => renderCurrentPage());
     }
   });
 
   // 탭/창 닫기 전 push 즉시 flush (debounce 무시)
   window.addEventListener('beforeunload', () => {
-    if (cloudReady && currentSession && !skipCloud && cloudPullDone && cloudPushTimeout) {
+    if (cloudReady && syncCode && cloudPullDone && cloudPushTimeout) {
       clearTimeout(cloudPushTimeout);
       // sendBeacon 같은 건 Supabase upsert에 적용 어려움 — 동기 fetch 시도
       try {
         navigator.sendBeacon && navigator.sendBeacon(
           `${SUPABASE_URL}/rest/v1/${CLOUD_TABLE}`,
-          new Blob([JSON.stringify({ user_id: currentSession.user.id, state, updated_at: new Date().toISOString() })], { type: 'application/json' })
+          new Blob([JSON.stringify({ code: syncCode, state, updated_at: new Date().toISOString() })], { type: 'application/json' })
         );
       } catch(e) {}
     }
@@ -2283,7 +2230,7 @@ function init() {
 
   // 5초마다 강제 풀 (Realtime 안 됐을 때 fallback — 거의 실시간)
   setInterval(() => {
-    if (!document.hidden && cloudReady && currentSession && !skipCloud && cloudPullDone) {
+    if (!document.hidden && cloudReady && syncCode && cloudPullDone) {
       pullFromCloudGently();
     }
   }, 5000);
@@ -2297,12 +2244,12 @@ function renderCurrentPage() {
 
 // 부드러운 pull — 클라우드가 더 새로우면 로컬 덮어쓰기, 아니면 무시
 async function pullFromCloudGently() {
-  if (!supa || !currentSession) return;
+  if (!supa || !syncCode) return;
   try {
     const { data, error } = await supa
       .from(CLOUD_TABLE)
       .select('state, updated_at')
-      .eq('user_id', currentSession.user.id)
+      .eq('code', syncCode)
       .maybeSingle();
     if (error || !data || !data.state) return;
     const cloudTs = new Date(data.updated_at).getTime();
