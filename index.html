@@ -38,6 +38,16 @@
       <input type="text" id="otp-code" placeholder="6자리 코드 입력" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" />
       <button id="otp-verify-btn" type="button">로그인 →</button>
     </div>
+    <details id="url-login-details" style="margin-top:14px; font-size:12px;">
+      <summary style="cursor:pointer; color:var(--signal); text-decoration:underline;">⚠️ 코드 없는 메일 받았으면 → "Log In" 링크 직접 붙여넣기</summary>
+      <p style="margin-top:8px; font-size:11px; color:var(--muted); line-height:1.5;">
+        메일에서 <strong>"Log In"</strong> 우클릭 → <strong>"링크 주소 복사"</strong> → 아래 붙여넣기
+      </p>
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <input type="text" id="login-url" placeholder="https://...supabase.co/auth/v1/verify?token=..." style="flex:1; padding:10px 12px; font-size:11px; border:1.5px solid var(--border); border-radius:12px;" />
+        <button id="login-url-btn" type="button" style="padding:10px 14px; background:var(--ink); color:#fff; border:0; border-radius:12px; font-family:inherit; font-size:12px; cursor:pointer;">로그인</button>
+      </div>
+    </details>
     <div class="login-status" id="login-status"></div>
     <div class="login-foot">
       🔒 본인 이메일만 등록됨. 데이터는 클라우드(Supabase)에 저장.<br>

@@ -701,6 +701,49 @@ async function verifyOtp() {
 // 호환성을 위해 기존 이름도 매핑
 const sendMagicLink = sendOtpCode;
 
+// 매직링크 URL 직접 붙여넣어 로그인 — Supabase redirect 우회
+async function loginWithUrl() {
+  const inp = document.getElementById('login-url');
+  const status = document.getElementById('login-status');
+  if (!inp) return;
+  const url = inp.value.trim();
+  if (!url) {
+    status.textContent = 'URL 붙여넣기 필요';
+    status.className = 'login-status error';
+    return;
+  }
+  try {
+    let token = '';
+    let type = 'magiclink';
+    // URL parse — token이 query 또는 fragment에 있음
+    if (url.includes('token=')) {
+      const u = new URL(url);
+      token = u.searchParams.get('token') || u.searchParams.get('token_hash') || '';
+      type = u.searchParams.get('type') || 'magiclink';
+    } else if (url.includes('#access_token=')) {
+      // 이미 verify된 경우 — fragment에 access_token + refresh_token
+      const hash = url.split('#')[1];
+      const params = new URLSearchParams(hash);
+      const at = params.get('access_token');
+      const rt = params.get('refresh_token');
+      if (at && rt) {
+        const { error } = await supa.auth.setSession({ access_token: at, refresh_token: rt });
+        if (error) throw error;
+        return;
+      }
+    }
+    if (!token) throw new Error('URL에 토큰 못 찾음 — 정확한 "Log In" 링크 복사했는지 확인');
+    status.textContent = '로그인 중...';
+    status.className = 'login-status';
+    const { error } = await supa.auth.verifyOtp({ token_hash: token, type });
+    if (error) throw error;
+    // SIGNED_IN 이벤트가 자동으로 처리
+  } catch(e) {
+    status.className = 'login-status error';
+    status.textContent = '실패: ' + e.message;
+  }
+}
+
 // 편집 잠금 — 클라우드 pull 완료 전 push 막기
 let cloudPullDone = false;
 
@@ -2163,6 +2206,13 @@ function setupEventDelegation() {
   // OTP 코드 verify
   const otpBtn = document.getElementById('otp-verify-btn');
   if (otpBtn) otpBtn.addEventListener('click', () => verifyOtp());
+  // URL 직접 붙여넣기 로그인
+  const urlBtn = document.getElementById('login-url-btn');
+  if (urlBtn) urlBtn.addEventListener('click', () => loginWithUrl());
+  const urlInput = document.getElementById('login-url');
+  if (urlInput) urlInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); loginWithUrl(); }
+  });
   const otpInput = document.getElementById('otp-code');
   if (otpInput) {
     otpInput.addEventListener('keydown', e => {
